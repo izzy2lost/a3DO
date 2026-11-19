@@ -8,7 +8,7 @@
 namespace retro3do {
 namespace {
 
-constexpr const char* kActivityClass = "com/crownparkcomputing/retro3do/Retro3DOActivity";
+constexpr const char* kActivityClass = "com/izzy2lost/a3do/A3DOActivity";
 
 // SDL owns the JVM attachment for whichever thread asks, so this is safe to
 // call from the emulator thread as well as the main one.
@@ -243,6 +243,27 @@ int AndroidStorage::open_document(const std::string& uri) {
     return static_cast<int>(fd);
 }
 
+void AndroidStorage::pick_bios_file() {
+    call_static_void("nativePickBios");
+}
+
+BiosImport AndroidStorage::consume_bios_import() {
+    const std::string text = call_static_string(
+        "nativeConsumeBiosImport", "()Ljava/lang/String;", nullptr);
+    if (text.empty()) return {};
+    const std::vector<std::string> fields = split_fields(text, '|');
+    BiosImport result;
+    result.ready = true;
+    result.success = fields.size() >= 3 && fields[0] == "OK";
+    if (result.success) {
+        result.name = fields[1];
+        result.path = fields[2];
+    } else {
+        result.message = fields.size() >= 2 ? fields[1] : "BIOS import failed";
+    }
+    return result;
+}
+
 void AndroidStorage::pick_gpu_driver_package() {
     JNIEnv* e = env();
     if (e == nullptr) return;
@@ -280,7 +301,7 @@ GpuDriverImport AndroidStorage::consume_gpu_driver_import() {
         result.name = fields[1];
         result.directory = fields[2];
         result.library = fields[3];
-        result.message = "Driver imported - restart Retro-3DO to apply";
+        result.message = "Driver imported - restart a3DO to apply";
     } else {
         result.message = fields.size() >= 2 ? fields[1]
                                             : "Driver package import failed";
@@ -418,6 +439,8 @@ DocumentEntry AndroidStorage::consume_picked_folder() { return {}; }
 void AndroidStorage::forget_root(const std::string&) {}
 std::vector<DocumentEntry> AndroidStorage::list(const std::string&) { return {}; }
 int AndroidStorage::open_document(const std::string&) { return -1; }
+void AndroidStorage::pick_bios_file() {}
+BiosImport AndroidStorage::consume_bios_import() { return {}; }
 void AndroidStorage::pick_gpu_driver_package() {}
 GpuDriverImport AndroidStorage::consume_gpu_driver_import() { return {}; }
 std::string AndroidStorage::native_library_directory() { return {}; }

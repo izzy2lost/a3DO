@@ -35,7 +35,7 @@ std::string Storage::writable_directory() {
     // SDL puts this in the right place on every platform: the app's private
     // data directory on Android, Application Support on iOS and macOS,
     // AppData on Windows, XDG data on Linux. It is created if missing.
-    char* path = SDL_GetPrefPath("CrownParkComputing", "Retro-3DO");
+    char* path = SDL_GetPrefPath("izzy2lost", "a3DO");
     if (path == nullptr) {
         return {};
     }

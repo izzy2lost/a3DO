@@ -1,7 +1,7 @@
-# Retro-3DO
+# a3DO
 
-A new 3DO Interactive Multiplayer emulator codebase for phones, tablets and
-desktops. Its historical reference exposure is disclosed in
+A 3DO Interactive Multiplayer emulator for phones, tablets and desktops
+(Android application id `com.izzy2lost.a3do`). Its historical reference exposure is disclosed in
 [core/docs/PROVENANCE.md](core/docs/PROVENANCE.md).
 
 One C++ codebase builds for Android, macOS, Linux and Windows. There is no
@@ -13,6 +13,30 @@ target, and Dear ImGui draws the launcher and the in-game overlay.
 > commercial titles. Compatibility is still in progress, but Road Rash and The
 > Need for Speed both boot into correctly rendered gameplay. See
 > [Roadmap](#roadmap) and the [Opera parity audit](core/docs/OPERA_AUDIT.md).
+
+## Built-in BIOS
+
+a3DO ships with [opera-boot](https://github.com/trapexit/opera-boot), an
+open-source replacement for the retail 3DO boot ROM: it initialises the
+machine, loads the operating system mastered on the game disc and hands over
+to it. A user therefore needs only their games. A real BIOS is optional and can
+be chosen in **Settings → System BIOS**, which can also switch back to the
+built-in one. On Android the chosen file is copied into private app storage.
+
+The complete opera-boot source is vendored in
+[`third_party/opera-boot/`](third_party/opera-boot/) so it can be changed. It
+is compiled with the 3DO DevKit's ARM SDT tools, which the normal build does
+not need: the build embeds the checked-in
+[`prebuilt/opera-boot.bin`](third_party/opera-boot/prebuilt/) (via
+`cmake/embed_binary.cmake`). After changing the ROM's source, rebuild that
+image with:
+
+```sh
+tools/build-opera-boot.sh /path/to/3do-devkit
+```
+
+and commit the source and the new image together. Set `-DA3DO_BUILTIN_BIOS=`
+to embed a different image without replacing the file.
 
 ## Why this exists as a separate core
 
@@ -42,8 +66,8 @@ cmake --build build -j
 ./build/retro3do
 ```
 
-Choose **Demo** in the launcher, or run `./build/retro3do --demo`, to boot the
-included original hardware demonstration without a commercial BIOS or game.
+Run `./build/retro3do --demo` to boot the core's original hardware
+demonstration ROM, which needs no BIOS or game.
 The 1.7 KB bare-metal ARM ROM drives MADAM/VDLP video, DSPP audio and PBUS input
 through the emulator's normal hardware paths. Its complete source and
 reproducible build are in [`demo/`](demo/).
@@ -61,6 +85,9 @@ They run on the host, with no window and no device. A bug found on hardware gets
 reproduced here before it gets fixed.
 
 ### Android
+
+First run asks for one thing: the games folder. Everything else, including an
+optional real BIOS, is in Settings.
 
 ```sh
 cd android
@@ -92,7 +119,7 @@ Artwork**, and use that account's normal daily allowance/credit balance.
 ### macOS
 
 ```sh
-macos/build-macos.sh          # universal Retro-3DO.app
+macos/build-macos.sh          # universal a3DO.app
 ```
 
 macOS-only, and deliberately so — a Linux cross-build can make something that
@@ -232,6 +259,7 @@ application from one that comes up blank.
 - [x] On-screen controls, movable, saved per device
 - [x] Settings that survive a restart
 - [x] Original built-in no-BIOS hardware demonstration ROM
+- [x] Built-in open-source boot ROM (opera-boot), optional user BIOS
 - [x] RetroMedia account artwork downloads and illustrated library cards (Android)
 - [x] Scanline-timed VDLP updates
 - [ ] Full MADAM CEL pause/status timing
@@ -240,7 +268,8 @@ application from one that comes up blank.
 
 ## Licence
 
-Project-owned code is MIT licensed; see [LICENSE](LICENSE). Bundled components
-retain their own terms, collected in [core/docs/THIRD_PARTY.md](core/docs/THIRD_PARTY.md).
+Project-owned code is MIT licensed; see [LICENSE](LICENSE). The bundled
+opera-boot ROM is GPL-2.0-only, with its complete source in
+`third_party/opera-boot/`. Bundled components retain their own terms, collected in [core/docs/THIRD_PARTY.md](core/docs/THIRD_PARTY.md).
 The distribution and historical reference-source notices in [NOTICE](NOTICE)
 and [core/docs/PROVENANCE.md](core/docs/PROVENANCE.md) are part of the release record.

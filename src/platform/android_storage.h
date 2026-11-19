@@ -24,6 +24,16 @@ struct DocumentEntry {
     bool is_directory = false;
 };
 
+// A BIOS the user picked, already copied into private app storage by Java so
+// the native side can open it as a plain path.
+struct BiosImport {
+    bool ready = false;
+    bool success = false;
+    std::string name;
+    std::string path;
+    std::string message;
+};
+
 struct GpuDriverImport {
     bool ready = false;
     bool success = false;
@@ -95,6 +105,11 @@ public:
 
     // Custom Android GPU drivers are selected through a one-file SAF picker,
     // then validated and unpacked by Java into the app's private storage.
+    // One-file picker for an optional real BIOS. The result arrives later
+    // through consume_bios_import.
+    static void pick_bios_file();
+    static BiosImport consume_bios_import();
+
     static void pick_gpu_driver_package();
     static GpuDriverImport consume_gpu_driver_import();
     static std::string native_library_directory();

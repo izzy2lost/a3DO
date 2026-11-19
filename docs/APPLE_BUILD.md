@@ -63,7 +63,7 @@ Added or corrected:
 - **macOS bundle target** — `macos/Info.plist.in`, `macos/Retro3DO.entitlements`,
   `macos/build-macos.sh`, and the `APPLE` branch in `CMakeLists.txt`.
 - **Icons** — `assets/apple/Assets.xcassets`, generated from
-  `assets/branding/retro3do-icon-1024.png`: the full 16→1024 macOS ladder. The
+  `assets/branding/a3do-icon-1024.png`: the full 16→1024 macOS ladder. The
   iOS image that used to sit beside it went to Clio.
 
 ## Build it
@@ -96,7 +96,7 @@ CMake cache variables, if driving the build by hand:
 
 | Variable | Default | What it does |
 |---|---|---|
-| `RETRO3DO_BUNDLE_ID` | `com.crownparkcomputing.retro3DO` | Bundle identifier, both platforms |
+| `RETRO3DO_BUNDLE_ID` | `com.izzy2lost.a3do` | Bundle identifier, both platforms |
 | `RETRO3DO_APPLE_TEAM_ID` | *(empty)* | Empty disables signing entirely |
 | `RETRO3DO_MARKETING_VERSION` | `1.0` | `CFBundleShortVersionString` |
 | `RETRO3DO_BUILD_NUMBER` | `1` | `CFBundleVersion` — must increase on every upload |
@@ -108,7 +108,7 @@ CMake cache variables, if driving the build by hand:
 In rough order of likelihood.
 
 1. **The generated project is `Retro3DO.xcodeproj` and the scheme is
-   `retro3do`** (the CMake target name), while the product is `Retro-3DO.app`
+   `retro3do`** (the CMake target name), while the product is `a3DO.app`
    (its `OUTPUT_NAME`). If `xcodebuild` reports an unknown scheme, that is the
    name to check first — nothing else is wrong.
 2. **SDL's own CMake decides the Apple backends.** The vendored SDL builds
@@ -133,11 +133,11 @@ In rough order of likelihood.
 This is the part users get stuck on, and it differs per platform.
 
 - **iOS**: `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace` are
-  both set, so *Retro-3DO* appears under **On My iPhone** in the Files app.
+  both set, so *a3DO* appears under **On My iPhone** in the Files app.
   Anything dropped there lands in `Documents`, which is the first root the
   in-app browser offers. A `.chd` alongside the BIOS is all it takes.
 - **Simulator**: no Files sharing. Copy into the container by hand —
-  `xcrun simctl get_app_container booted com.crownparkcomputing.retro3DO data`
+  `xcrun simctl get_app_container booted com.izzy2lost.a3do data`
   prints the path.
 - **macOS**: the app is unsandboxed, so its browser reaches the user's own
   disks. `Downloads`, `Documents` and `Home` are offered as roots. A disc image
@@ -170,10 +170,10 @@ Put this plainly in **Review Notes on every submission**:
 ```sh
 codesign --deep --force --options runtime --timestamp \
     --entitlements macos/Retro3DO.entitlements \
-    -s "Developer ID Application: <name> (<team>)" Retro-3DO.app
-ditto -c -k --keepParent Retro-3DO.app Retro-3DO.zip
-xcrun notarytool submit Retro-3DO.zip --keychain-profile <profile> --wait
-xcrun stapler staple Retro-3DO.app
+    -s "Developer ID Application: <name> (<team>)" a3DO.app
+ditto -c -k --keepParent a3DO.app a3DO.zip
+xcrun notarytool submit a3DO.zip --keychain-profile <profile> --wait
+xcrun stapler staple a3DO.app
 ```
 
 Without notarisation, a downloaded build is refused with a message about an

@@ -1,4 +1,4 @@
-package com.crownparkcomputing.retro3do;
+package com.izzy2lost.a3do;
 
 import android.app.Activity;
 import android.content.Context;
@@ -32,7 +32,7 @@ import java.io.OutputStream;
  */
 public final class DocumentAccess {
 
-    private static final String TAG = "Retro3DO";
+    private static final String TAG = "a3DO";
     private static final String PREFS = "retro3do.storage";
     private static final String KEY_ROOTS = "granted_roots";
 

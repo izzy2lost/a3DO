@@ -1,7 +1,7 @@
-Retro-3DO distribution notice
+a3DO distribution notice
 Copyright (c) 2026 Crown Park Computing
 
-The project-owned Retro-3DO source code is distributed under the MIT License
+The project-owned a3DO source code is distributed under the MIT License
 in LICENSE. That licence permits use, modification, distribution,
 sublicensing and sale, subject to preserving its copyright and permission
 notice.
@@ -14,11 +14,23 @@ notices and provenance are recorded in core/NOTICE and core/docs/THIRD_PARTY.md
 
 The application also contains separately licensed components. Their copyright
 and licence terms remain in force and are collected in the corresponding
-third_party/* licence files. They are SDL3 (zlib), Dear ImGui (MIT) and
-AdrenoTools (BSD-2-Clause).
+third_party/* licence files. They are SDL3 (zlib), Dear ImGui (MIT),
+AdrenoTools (BSD-2-Clause) and the Roboto typeface carried with Dear ImGui
+(third_party/imgui/misc/fonts, Apache License 2.0), which is compiled in as
+the interface font.
 
-No commercial or third-party 3DO BIOS, game image, or RetroMedia catalogue
-content is included under the Retro-3DO software licence. The application does
+The built-in system ROM is opera-boot by trapexit
+(https://github.com/trapexit/opera-boot), licensed GPL-2.0-only. It is a
+separate program that runs on the emulated 3DO, not part of the application
+binary's own code; it is shipped as a ROM image embedded in the
+application. Its complete corresponding source, licence and build scripts are
+in third_party/opera-boot/, and tools/build-opera-boot.sh rebuilds the image
+from that source. a3DO modifies opera-boot: the upstream startup banner used
+third-party 3DO logo artwork, which a3DO has removed and replaced with original
+artwork (third_party/opera-boot/src/banner.c, 2026-11-19).
+
+No commercial or retail 3DO BIOS, game image, or RetroMedia catalogue
+content is included. The application does
 include, by way of the core, the small project-owned demonstration boot ROM
 whose complete source is in demo/. Users and distributors are responsible for having the rights to any
 other BIOS, games, artwork and custom GPU drivers they supply.
@@ -27,7 +39,7 @@ Historical reference-source exposure is documented in
 core/docs/PROVENANCE.md.
 FreeDO/Opera source is not compiled or vendored in this repository, but FreeDO
 was studied during development and its published notice purports to require
-owner approval for commercial use of knowledge obtained from it. The Retro-3DO
+owner approval for commercial use of knowledge obtained from it. The a3DO
 MIT licence grants rights only in Crown Park Computing's copyright and does not
 purport to grant or waive any third party's rights.
 

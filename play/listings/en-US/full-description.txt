@@ -1,6 +1,7 @@
-Retro-3DO is a new emulator implementation for the 3DO Interactive Multiplayer, built for Android phones, tablets and gaming handhelds.
+a3DO is a new emulator implementation for the 3DO Interactive Multiplayer, built for Android phones, tablets and gaming handhelds.
 
 Features:
+• Built-in open-source BIOS (opera-boot) - optional real BIOS support
 • Vulkan and OpenGL ES rendering
 • Custom Adreno/Turnip driver support on compatible devices
 • ISO, BIN/CUE, IMG and CHD game images
@@ -10,6 +11,6 @@ Features:
 • 50/60 Hz system modes and optional CPU boost while preserving audio and video timing
 • A–Z library filters, cover artwork integration and one-touch rescanning
 
-Retro-3DO does not include a BIOS or games. You must supply legally obtained 3DO BIOS and game images. Compatibility is under active development.
+a3DO includes opera-boot, an open-source boot ROM, so no BIOS file is needed to start games. You can optionally use your own legally obtained 3DO BIOS instead. Games are not included; you must supply legally obtained game images. Compatibility is under active development.
 
-Retro-3DO is not affiliated with or endorsed by The 3DO Company or any game publisher.
+a3DO is not affiliated with or endorsed by The 3DO Company or any game publisher.

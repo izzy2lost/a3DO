@@ -1,4 +1,4 @@
-package com.crownparkcomputing.retro3do;
+package com.izzy2lost.a3do;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -57,17 +57,20 @@ import android.util.Base64;
  * They are static so the native side does not need an object reference, with a
  * single instance parked at creation — SDL only ever creates one activity.
  */
-public class Retro3DOActivity extends SDLActivity {
+public class A3DOActivity extends SDLActivity {
 
-    private static final String TAG = "Retro3DO";
+    private static final String TAG = "a3DO";
     private static final float MAX_PRESENTATION_HZ = 120.0f;
     private static final int REQUEST_GPU_DRIVER = 7302;
     private static final long MAX_GPU_PACKAGE_BYTES = 512L * 1024L * 1024L;
+    private static final int REQUEST_BIOS = 7303;
+    // The 3DO's ROM window. Anything larger cannot be a system ROM.
+    private static final int MAX_BIOS_BYTES = 1024 * 1024;
     private static final String RETROMEDIA_URL =
         "https://media.crownparkcomputing.com";
     private static final String RETROMEDIA_PREFS = "retromedia_private";
     private static final String RETROMEDIA_KEY_ALIAS =
-        "com.crownparkcomputing.retro3do.retromedia.session";
+        "com.izzy2lost.a3do.retromedia.session";
     private static final int MAX_RETROMEDIA_REPLY_BYTES = 4 * 1024 * 1024;
     private static final int MAX_RETROMEDIA_ART_BYTES = 32 * 1024 * 1024;
     private static final Set<String> RETROMEDIA_CARD_TYPES = new HashSet<String>();
@@ -78,13 +81,14 @@ public class Retro3DOActivity extends SDLActivity {
         RETROMEDIA_CARD_TYPES.add("titles");
     }
 
-    private static Retro3DOActivity instance;
+    private static A3DOActivity instance;
     private DocumentAccess documents;
     // Consumed once by the native setup wizard after the asynchronous system
     // picker returns. Keeping the actual URI avoids guessing which persisted
     // grant is new when the user selects a folder that was already granted.
     private String pickedFolder;
     private volatile String gpuDriverImportResult;
+    private volatile String biosImportResult;
     private volatile String retroMediaResult;
     private volatile String retroMediaCatalogueResult = "";
     private volatile boolean retroMediaBusy;
@@ -162,13 +166,23 @@ public class Retro3DOActivity extends SDLActivity {
             // folder and the user can try again.
             return;
         }
+        if (requestCode == REQUEST_BIOS) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                final Uri biosUri = data.getData();
+                biosImportResult = null;
+                new Thread(new Runnable() {
+                    @Override public void run() { importBios(biosUri); }
+                }, "a3DO-bios-import").start();
+            }
+            return;
+        }
         if (requestCode == REQUEST_GPU_DRIVER) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 final Uri packageUri = data.getData();
                 gpuDriverImportResult = null;
                 new Thread(new Runnable() {
                     @Override public void run() { importGpuDriver(packageUri); }
-                }, "Retro3DO-driver-import").start();
+                }, "a3DO-driver-import").start();
             }
             return;
         }
@@ -178,7 +192,7 @@ public class Retro3DOActivity extends SDLActivity {
     // --- called from native ------------------------------------------------
 
     public static void nativePickFolder() {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         // The picker must be started from the UI thread; the emulator's thread
         // is what calls in here.
@@ -221,7 +235,7 @@ public class Retro3DOActivity extends SDLActivity {
     }
 
     public static void nativePickGpuDriver() {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.runOnUiThread(new Runnable() {
             @Override public void run() {
@@ -237,6 +251,33 @@ public class Retro3DOActivity extends SDLActivity {
         });
     }
 
+    /**
+     * Let the user pick one BIOS file. It is copied into private app storage
+     * rather than kept as a document grant: a system ROM is at most 1 MiB, the
+     * copy survives the source being moved or the grant being revoked, and the
+     * native side can then open it as an ordinary path.
+     */
+    public static void nativePickBios() {
+        final A3DOActivity self = instance;
+        if (self == null) return;
+        self.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                // ROM images have no registered MIME type, so offer everything.
+                intent.setType("*/*");
+                self.startActivityForResult(intent, REQUEST_BIOS);
+            }
+        });
+    }
+
+    public static String nativeConsumeBiosImport() {
+        if (instance == null || instance.biosImportResult == null) return "";
+        String result = instance.biosImportResult;
+        instance.biosImportResult = null;
+        return result;
+    }
+
     public static String nativeConsumeGpuDriverImport() {
         if (instance == null || instance.gpuDriverImportResult == null) return "";
         String result = instance.gpuDriverImportResult;
@@ -250,7 +291,7 @@ public class Retro3DOActivity extends SDLActivity {
     }
 
     public static void nativeRetroMediaStatus() {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("STATUS", new RetroMediaWork() {
             @Override public void run() throws Exception { self.retroMediaStatus(); }
@@ -259,7 +300,7 @@ public class Retro3DOActivity extends SDLActivity {
 
     public static void nativeRetroMediaLogin(final String email,
                                              final String password) {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("LOGIN", new RetroMediaWork() {
             @Override public void run() throws Exception {
@@ -269,7 +310,7 @@ public class Retro3DOActivity extends SDLActivity {
     }
 
     public static void nativeRetroMediaLogout() {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("LOGOUT", new RetroMediaWork() {
             @Override public void run() throws Exception { self.retroMediaLogout(); }
@@ -278,7 +319,7 @@ public class Retro3DOActivity extends SDLActivity {
 
     public static void nativeRetroMediaSync(final String gameNames,
                                             final String mediaType) {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("SYNC", new RetroMediaWork() {
             @Override public void run() throws Exception {
@@ -289,7 +330,7 @@ public class Retro3DOActivity extends SDLActivity {
 
     public static void nativeRetroMediaCatalogue(final String search,
                                                  String ignored) {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("CATALOGUE", new RetroMediaWork() {
             @Override public void run() throws Exception {
@@ -304,7 +345,7 @@ public class Retro3DOActivity extends SDLActivity {
 
     public static void nativeRetroMediaDownload(final String slug,
                                                 final String gamesFolder) {
-        final Retro3DOActivity self = instance;
+        final A3DOActivity self = instance;
         if (self == null) return;
         self.startRetroMediaTask("DOWNLOAD", new RetroMediaWork() {
             @Override public void run() throws Exception {
@@ -356,6 +397,72 @@ public class Retro3DOActivity extends SDLActivity {
         return (header[0] & 0xff) == 0x7f && header[1] == 'E' &&
                header[2] == 'L' && header[3] == 'F' && header[4] == 2 &&
                header[5] == 1 && (header[18] & 0xff) == 0xb7 && header[19] == 0;
+    }
+
+    private String openableDisplayName(Uri uri) {
+        android.database.Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(
+                uri, new String[] { android.provider.OpenableColumns.DISPLAY_NAME },
+                null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                String name = cursor.getString(0);
+                if (name != null && !name.isEmpty()) return name;
+            }
+        } catch (Exception ignored) {
+            // Fall through to a generic name; the file itself is what matters.
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return "bios.bin";
+    }
+
+    private void importBios(Uri biosUri) {
+        final String name = safeResultField(openableDisplayName(biosUri));
+        File folder = new File(getFilesDir(), "bios");
+        File staging = new File(folder, "custom-bios.tmp");
+        File destination = new File(folder, "custom-bios.bin");
+        InputStream input = null;
+        OutputStream output = null;
+        try {
+            if (!folder.isDirectory() && !folder.mkdirs()) {
+                throw new Exception("Cannot create private BIOS folder");
+            }
+            input = getContentResolver().openInputStream(biosUri);
+            if (input == null) throw new Exception("Cannot open the selected file");
+            ByteArrayOutputStream collected = new ByteArrayOutputStream();
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) > 0) {
+                collected.write(buffer, 0, count);
+                if (collected.size() > MAX_BIOS_BYTES) {
+                    throw new Exception("Too large for a 3DO BIOS (over 1 MiB)");
+                }
+            }
+            byte[] data = collected.toByteArray();
+            if (data.length == 0) throw new Exception("The selected file is empty");
+            output = new FileOutputStream(staging);
+            output.write(data);
+            output.close();
+            output = null;
+            // Replace the previous custom BIOS only once the new one is whole.
+            if (destination.exists() && !destination.delete()) {
+                throw new Exception("Cannot replace the previous BIOS");
+            }
+            if (!staging.renameTo(destination)) {
+                throw new Exception("Cannot store the BIOS");
+            }
+            biosImportResult = "OK|" + name + "|" + destination.getAbsolutePath();
+        } catch (Exception error) {
+            Log.e(TAG, "BIOS import failed", error);
+            if (staging.exists() && !staging.delete()) {
+                Log.w(TAG, "Could not remove " + staging);
+            }
+            biosImportResult = "ERROR|" + safeResultField(usefulError(error));
+        } finally {
+            try { if (input != null) input.close(); } catch (Exception ignored) { }
+            try { if (output != null) output.close(); } catch (Exception ignored) { }
+        }
     }
 
     private void importGpuDriver(Uri packageUri) {
@@ -500,7 +607,7 @@ public class Retro3DOActivity extends SDLActivity {
                     retroMediaBusy = false;
                 }
             }
-        }, "Retro3DO-retromedia-" + operation.toLowerCase(Locale.ROOT)).start();
+        }, "a3DO-retromedia-" + operation.toLowerCase(Locale.ROOT)).start();
     }
 
     private static String usefulError(Exception error) {
@@ -611,7 +718,7 @@ public class Retro3DOActivity extends SDLActivity {
         connection.setReadTimeout(60000);
         connection.setRequestMethod(method);
         connection.setRequestProperty("Accept", "application/json, image/*, application/zip");
-        connection.setRequestProperty("User-Agent", "Retro-3DO/2.1 RetroMedia client");
+        connection.setRequestProperty("User-Agent", "a3DO/2.1 RetroMedia client");
         if (cookie != null && !cookie.isEmpty()) {
             connection.setRequestProperty("Cookie", cookie);
         }
@@ -948,7 +1055,7 @@ public class Retro3DOActivity extends SDLActivity {
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(10 * 60 * 1000);
         connection.setRequestProperty("Cookie", cookie);
-        connection.setRequestProperty("User-Agent", "Retro-3DO/2.1 RetroMedia client");
+        connection.setRequestProperty("User-Agent", "a3DO/2.1 RetroMedia client");
         connection.setRequestProperty("Accept", "application/octet-stream, application/zip");
         int status = connection.getResponseCode();
         if (status != 200) {

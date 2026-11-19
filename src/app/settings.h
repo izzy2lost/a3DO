@@ -50,6 +50,10 @@ private:
 // The keys the app actually uses, in one place so a typo is a compile error
 // rather than a setting that silently never loads.
 namespace settings_key {
+// "builtin" runs the bundled opera-boot ROM; "custom" runs the user's own BIOS
+// at kBiosPath. Absent means builtin, unless an older settings file already
+// names a BIOS path, which is then honoured as custom.
+constexpr const char* kBiosSource = "bios.source";
 constexpr const char* kBiosPath = "bios.path";
 constexpr const char* kBiosName = "bios.name";
 constexpr const char* kDiscPath = "disc.path";
@@ -68,8 +72,6 @@ constexpr const char* kGpuDriverDirectory = "video.gpu_driver.directory";
 constexpr const char* kGpuDriverLibrary = "video.gpu_driver.library";
 constexpr const char* kLibraryCount = "library.count";
 constexpr const char* kSetupComplete = "setup.complete";
-constexpr const char* kBiosFolderPath = "setup.bios_folder.path";
-constexpr const char* kBiosFolderName = "setup.bios_folder.name";
 constexpr const char* kGamesFolderPath = "setup.games_folder.path";
 constexpr const char* kGamesFolderName = "setup.games_folder.name";
 }  // namespace settings_key

@@ -5,7 +5,7 @@ set -euo pipefail
 : "${BUNDLE_PATH:?BUNDLE_PATH is required}"
 : "${TRACK:?TRACK is required}"
 
-package_name="com.fourdo.android"
+package_name="com.izzy2lost.a3do"
 api_root="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
 upload_root="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${package_name}"
 auth_header="Authorization: Bearer ${PLAY_ACCESS_TOKEN}"

@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <unordered_map>
 
 #include "retro3do.h"
+#include "app/builtin_bios.h"
 #include "app/settings.h"
 #include "platform/android_storage.h"
 #include "platform/platform.h"
@@ -56,15 +58,6 @@ bool has_disc_extension(const std::string& name) {
         }
     }
     return false;
-}
-
-bool has_bios_extension(const std::string& name, bool allow_bin) {
-    const std::string lower = lowercased(name);
-    if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".rom") == 0) {
-        return true;
-    }
-    return allow_bin && lower.size() > 4 &&
-           lower.compare(lower.size() - 4, 4, ".bin") == 0;
 }
 
 }  // namespace
@@ -166,7 +159,7 @@ bool App::init() {
     flags |= SDL_WINDOW_RESIZABLE;
 #endif
 
-    if (!SDL_CreateWindowAndRenderer("Retro-3DO", kDefaultWindowWidth,
+    if (!SDL_CreateWindowAndRenderer("a3DO", kDefaultWindowWidth,
                                      kDefaultWindowHeight, flags, &window_,
                                      &renderer_)) {
         const std::string requested_error = SDL_GetError();
@@ -175,7 +168,7 @@ bool App::init() {
             // app. Fall back to SDL's platform choice and report it on System.
             SDL_ResetHint(SDL_HINT_RENDER_DRIVER);
             SDL_ResetHint(SDL_HINT_VULKAN_LIBRARY);
-            if (SDL_CreateWindowAndRenderer("Retro-3DO", kDefaultWindowWidth,
+            if (SDL_CreateWindowAndRenderer("a3DO", kDefaultWindowWidth,
                                             kDefaultWindowHeight, flags,
                                             &window_, &renderer_)) {
                 renderer_startup_message_ =
@@ -585,11 +578,80 @@ bool App::open_bios(const std::string& path, const std::string& name) {
     // here instead of a document URI, and that is invisible without seeing the
     // actual string.
     SDL_Log("open BIOS: %s", path.c_str());
-    if (AndroidStorage::available()) {
+    // Only a document URI needs the descriptor route. A custom BIOS imported on
+    // Android, and the built-in ROM, are plain files in private storage.
+    if (AndroidStorage::available() && path.rfind("content://", 0) == 0) {
         return retro3do_load_bios_fd(emu_, AndroidStorage::open_document(path),
                                      (name.empty() ? path : name).c_str()) != 0;
     }
     return retro3do_load_bios(emu_, path.c_str()) != 0;
+}
+
+// The core loads a ROM from a path or a descriptor, so the embedded image is
+// written to private storage first. It is rewritten only when its bytes
+// differ, which is how an app update carrying a new opera-boot takes effect.
+bool App::load_builtin_bios() {
+    const std::string path =
+        Storage::join(Storage::writable_directory(), "opera-boot.bin");
+    bool current = false;
+    size_t size = 0;
+    if (void* existing = SDL_LoadFile(path.c_str(), &size)) {
+        current = size == kOperaBootRom_size &&
+                  std::memcmp(existing, kOperaBootRom, size) == 0;
+        SDL_free(existing);
+    }
+    if (!current && !SDL_SaveFile(path.c_str(), kOperaBootRom, kOperaBootRom_size)) {
+        SDL_Log("Could not write the built-in BIOS: %s", SDL_GetError());
+        return false;
+    }
+    if (!open_bios(path, kBuiltinBiosName)) {
+        SDL_Log("%s", retro3do_last_error(emu_));
+        return false;
+    }
+    return true;
+}
+
+// Puts the remembered BIOS choice into the machine: the user's own BIOS when
+// one is chosen and still loads, otherwise the built-in opera-boot. A custom
+// BIOS that has gone missing falls back to built-in rather than leaving the
+// machine with nothing to run, and the user is told why.
+void App::apply_bios_selection() {
+    std::string source = settings_->get(settings_key::kBiosSource);
+    const std::string path = settings_->get(settings_key::kBiosPath);
+    const std::string name = settings_->get(settings_key::kBiosName);
+    if (source.empty()) source = path.empty() ? "builtin" : "custom";
+
+    std::string message;
+    if (source == "custom") {
+        if (open_bios(path, name)) {
+            settings_->set(settings_key::kBiosSource, "custom");
+            ui_->set_bios_status(true, name.empty() ? Storage::base_name(path) : name, "");
+            return;
+        }
+        SDL_Log("Custom BIOS is no longer usable; using the built-in BIOS");
+        message = "Your BIOS could not be loaded, so the built-in BIOS is in use.";
+        settings_->remove(settings_key::kBiosPath);
+        settings_->remove(settings_key::kBiosName);
+    }
+    settings_->set(settings_key::kBiosSource, "builtin");
+    if (!load_builtin_bios()) {
+        message = "The built-in BIOS could not be loaded.";
+    }
+    ui_->set_bios_status(false, kBuiltinBiosName, message);
+}
+
+// Swapping the ROM under a running CPU is not safe, so any session in
+// progress is stopped at a frame boundary first and the machine is reset onto
+// the new ROM. The player returns to the library.
+void App::begin_bios_change() {
+    retro3do_set_paused(emu_, true);
+    emulating_ = false;
+    ui_->end_session();
+}
+
+void App::finish_bios_change() {
+    retro3do_reset(emu_);
+    save_settings();
 }
 
 bool App::open_disc(const std::string& path, const std::string& name) {
@@ -651,14 +713,11 @@ void App::load_settings() {
 
     load_library();
 
-    const std::string bios_folder =
-        settings_->get(settings_key::kBiosFolderPath);
     const std::string games_folder =
         settings_->get(settings_key::kGamesFolderPath);
     ui_->configure_setup(
         !AndroidStorage::available() ||
             settings_->get_bool(settings_key::kSetupComplete, false),
-        settings_->get(settings_key::kBiosFolderName), bios_folder,
         settings_->get(settings_key::kGamesFolderName), games_folder);
 
     retro3do_set_region(emu_, settings_->get_int(settings_key::kRegion, 0) == 1
@@ -689,34 +748,20 @@ void App::load_settings() {
     // error: a SAF grant can be revoked and an iOS container is reassigned on
     // every install, so yesterday's path being gone is ordinary rather than
     // exceptional. It simply is not loaded, and the launcher shows why.
-    const std::string bios = launch_bios_.empty()
-                                 ? settings_->get(settings_key::kBiosPath)
-                                 : launch_bios_;
-    ui_->set_remembered_bios(settings_->get(settings_key::kBiosName), bios);
-    if (!bios.empty()) {
-        if (open_bios(bios, launch_bios_.empty()
-                                ? settings_->get(settings_key::kBiosName)
-                                : Storage::base_name(launch_bios_))) {
-            SDL_Log("Reopened BIOS from settings");
-            // Explicit command-line launches remain scriptable. A normal app
-            // launch now opens the game library, which is the useful home
-            // screen once more than one title has been added.
-            start_on_launch_ = !launch_bios_.empty() || !launch_disc_.empty();
-        } else {
-            SDL_Log("Remembered BIOS is no longer reachable; forgetting it");
-            settings_->remove(settings_key::kBiosPath);
-            settings_->remove(settings_key::kBiosName);
+    // A BIOS named on the command line is used for this run only. Otherwise
+    // the remembered choice applies, which is the built-in BIOS by default.
+    bool explicit_bios = false;
+    if (!launch_bios_.empty()) {
+        explicit_bios = open_bios(launch_bios_, Storage::base_name(launch_bios_));
+        if (explicit_bios) {
+            ui_->set_bios_status(true, Storage::base_name(launch_bios_),
+                                 "Command-line BIOS for this run");
         }
     }
-    const std::string remembered_bios_name =
-        lowercased(settings_->get(settings_key::kBiosName));
-    const bool arcade_bios = remembered_bios_name.find("arcade") != std::string::npos ||
-                             remembered_bios_name.find("saot") != std::string::npos;
-    if (AndroidStorage::available() && (!(retro3do_bios_loaded(emu_) != 0) || arcade_bios) &&
-        !bios_folder.empty()) {
-        use_bios_folder(settings_->get(settings_key::kBiosFolderName),
-                        bios_folder);
-    }
+    if (!explicit_bios) apply_bios_selection();
+    // Explicit command-line launches remain scriptable. A normal app launch
+    // opens the game library.
+    start_on_launch_ = !launch_bios_.empty() || !launch_disc_.empty();
 
     const std::string disc = launch_disc_.empty()
                                  ? settings_->get(settings_key::kDiscPath)
@@ -822,54 +867,27 @@ void App::remember_game(const std::string& name, const std::string& target) {
     ui_->set_game_library(library_.games());
 }
 
-void App::use_bios_folder(const std::string& name, const std::string& target) {
-    if (target.empty()) return;
-    settings_->set(settings_key::kBiosFolderPath, target);
-    settings_->set(settings_key::kBiosFolderName, name);
-
-    // A firmware folder commonly contains several regional and arcade ROMs.
-    // Keep the already-working choice when it is in this folder; on a first
-    // install prefer the well-supported retail Panasonic images.
-    std::vector<DocumentEntry> candidates;
-    std::vector<std::pair<std::string, int>> pending{{target, 0}};
-    for (size_t cursor = 0; cursor < pending.size() && cursor < 256; ++cursor) {
-        const auto [folder, depth] = pending[cursor];
-        for (const DocumentEntry& entry : AndroidStorage::list(folder)) {
-            if (entry.is_directory && depth < 6) {
-                pending.emplace_back(entry.uri, depth + 1);
-            } else if (!entry.is_directory) {
-                if (has_bios_extension(entry.name, true)) candidates.push_back(entry);
-            }
-        }
+void App::use_custom_bios(const std::string& path, const std::string& name) {
+    begin_bios_change();
+    const std::string shown = name.empty() ? Storage::base_name(path) : name;
+    if (open_bios(path, shown)) {
+        settings_->set(settings_key::kBiosSource, "custom");
+        settings_->set(settings_key::kBiosPath, path);
+        settings_->set(settings_key::kBiosName, shown);
+        ui_->set_bios_status(true, shown, "");
+        SDL_Log("Custom BIOS loaded: %s", shown.c_str());
+    } else {
+        const std::string why = retro3do_last_error(emu_);
+        SDL_Log("%s", why.c_str());
+        // Put the previous choice back so the machine is never left empty.
+        apply_bios_selection();
+        ui_->set_bios_status(settings_->get(settings_key::kBiosSource) == "custom",
+                             settings_->get(settings_key::kBiosSource) == "custom"
+                                 ? settings_->get(settings_key::kBiosName)
+                                 : kBuiltinBiosName,
+                             "That file could not be used as a BIOS: " + why);
     }
-    const std::string remembered = settings_->get(settings_key::kBiosPath);
-    auto preference = [&](const DocumentEntry& entry) {
-        const std::string lower = lowercased(entry.name);
-        const bool arcade = lower.find("arcade") != std::string::npos ||
-                            lower.find("saot") != std::string::npos;
-        if (!remembered.empty() && entry.uri == remembered && !arcade) return 0;
-        if (lower == "panafz1.bin") return 1;
-        if (lower == "panafz10.bin") return 2;
-        if (lower.find("panafz") != std::string::npos) return 3;
-        if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".rom") == 0) {
-            return 4;
-        }
-        if (lower.find("goldstar") != std::string::npos) return 5;
-        return 10;
-    };
-    std::stable_sort(candidates.begin(), candidates.end(),
-                     [&](const DocumentEntry& a, const DocumentEntry& b) {
-                         return preference(a) < preference(b);
-                     });
-    for (const DocumentEntry& candidate : candidates) {
-        if (!open_bios(candidate.uri, candidate.name)) continue;
-        settings_->set(settings_key::kBiosPath, candidate.uri);
-        settings_->set(settings_key::kBiosName, candidate.name);
-        ui_->set_remembered_bios(candidate.name, candidate.uri);
-        SDL_Log("BIOS found by setup: %s", candidate.name.c_str());
-        break;
-    }
-    save_settings();
+    finish_bios_change();
 }
 
 void App::scan_games_folder(const std::string& name, const std::string& target) {
@@ -1230,6 +1248,19 @@ void App::tick() {
     feed_audio();
     save_nvram();
 
+    const BiosImport imported_bios = AndroidStorage::consume_bios_import();
+    if (imported_bios.ready) {
+        if (imported_bios.success) {
+            use_custom_bios(imported_bios.path, imported_bios.name);
+        } else {
+            ui_->set_bios_status(settings_->get(settings_key::kBiosSource) == "custom",
+                                 settings_->get(settings_key::kBiosSource) == "custom"
+                                     ? settings_->get(settings_key::kBiosName)
+                                     : kBuiltinBiosName,
+                                 imported_bios.message);
+        }
+    }
+
     const GpuDriverImport imported_driver =
         AndroidStorage::consume_gpu_driver_import();
     if (imported_driver.ready) {
@@ -1303,9 +1334,6 @@ void App::tick() {
         ui_->build(emu_, emulating_, smoothed_fps, emu.emulated_fps,
                    emu.frame_ms, emu.audio_underruns, *touch_);
 
-    if (intent.bios_folder_chosen) {
-        use_bios_folder(intent.folder_name, intent.folder_path);
-    }
     if (intent.games_folder_chosen) {
         scan_games_folder(intent.folder_name, intent.folder_path);
     }
@@ -1360,18 +1388,22 @@ void App::tick() {
             settings_->get(settings_key::kGamesFolderPath));
     }
 
+    if (intent.pick_bios) {
+        // Android: the system picker copies the file into private storage and
+        // the result is collected by consume_bios_import below.
+        AndroidStorage::pick_bios_file();
+    }
+    if (intent.use_builtin_bios) {
+        begin_bios_change();
+        settings_->set(settings_key::kBiosSource, "builtin");
+        settings_->remove(settings_key::kBiosPath);
+        settings_->remove(settings_key::kBiosName);
+        apply_bios_selection();
+        finish_bios_change();
+    }
     if (intent.bios_chosen && !intent.bios_path.empty()) {
-        // A document URI is not a path and cannot be opened by name, so it goes
-        // through the system for a descriptor instead. Everything downstream is
-        // the same either way.
-        if (open_bios(intent.bios_path, intent.bios_name)) {
-            settings_->set(settings_key::kBiosPath, intent.bios_path);
-            settings_->set(settings_key::kBiosName, intent.bios_name);
-            settings_->save();
-            SDL_Log("BIOS loaded");
-        } else {
-            SDL_Log("%s", retro3do_last_error(emu_));
-        }
+        // Desktop: a path from the file browser.
+        use_custom_bios(intent.bios_path, intent.bios_name);
     }
     if (intent.start_demo) {
         // Stop at a frame boundary before replacing the ROM. The demo never

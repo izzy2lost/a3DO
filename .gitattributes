@@ -5,3 +5,8 @@
 # `security import` as a complaint about the password, which reads like a
 # broken certificate and is nothing of the kind.
 *.enc binary
+
+# ROM images are raw machine code. The bundled opera-boot ROM is compiled into
+# the app byte for byte, so a line-ending rewrite would silently break boot.
+*.bin binary
+*.rom binary

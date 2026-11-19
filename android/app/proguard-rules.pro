@@ -81,6 +81,6 @@
 # android_storage.cpp reaches these purely by name via GetStaticMethodID, with
 # no Java-side caller, so R8 has no call-graph edge telling it they are used
 # and will strip or rename them without this rule.
--keep,includedescriptorclasses,allowoptimization class com.crownparkcomputing.retro3do.Retro3DOActivity {
+-keep,includedescriptorclasses,allowoptimization class com.izzy2lost.a3do.A3DOActivity {
     public static *** native*(...);
 }

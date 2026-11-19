@@ -12,20 +12,15 @@ def releaseKeystorePath = System.getenv('KEYSTORE_PATH')
 def releaseKeystoreFile = releaseKeystorePath ? file(releaseKeystorePath) : localReleaseKeystore
 
 android {
-    // The namespace is this project's own - it names the Java classes and the
-    // generated R, and nothing outside the build cares about it.
-    namespace = "com.crownparkcomputing.retro3do"
+    // The namespace names the Java classes and the generated R.
+    namespace = "com.izzy2lost.a3do"
     compileSdk 36
-    ndkVersion = "28.2.13676358"
+    ndkVersion = "30.0.16248370"
     defaultConfig {
-        // The application id is the app's identity on Play, and it has to stay
-        // what the existing listing already is. A different id is not a new
-        // version of this app, it is a second app: the installs, the reviews
-        // and the rating all stay behind with the old id, and there is no way
-        // to move them afterwards.
-        //
-        // It does NOT have to match the namespace above, and here it does not.
-        applicationId "com.fourdo.android"
+        // The application id is the app's identity on Play. Once a release is
+        // published under it, it cannot change without becoming a second app:
+        // installs, reviews and rating stay with the old id.
+        applicationId "com.izzy2lost.a3do"
         minSdk 24
         targetSdk 36
         // Increment for each Play upload; version codes cannot be reused.

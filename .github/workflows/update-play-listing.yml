@@ -1,4 +1,4 @@
-name: Update Retro-3DO Play listing
+name: Update a3DO Play listing
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Validate listing assets
         run: |
-          test "$(cat play/listings/en-US/title.txt)" = 'Retro-3DO'
+          test "$(cat play/listings/en-US/title.txt)" = 'a3DO'
           test "$(wc -m < play/listings/en-US/short-description.txt)" -le 81
           file play/graphics/store/icon.png | grep '512 x 512'
           file play/graphics/store/feature-graphic.png | grep '1024 x 500'

@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${PLAY_ACCESS_TOKEN:?PLAY_ACCESS_TOKEN is required}"
 
-package_name="com.fourdo.android"
+package_name="com.izzy2lost.a3do"
 api_root="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
 upload_root="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${package_name}"
 auth_header="Authorization: Bearer ${PLAY_ACCESS_TOKEN}"
@@ -32,7 +32,7 @@ existing=$(curl --fail --silent --show-error \
 while IFS= read -r language; do
   [ -n "$language" ] || continue
   body=$(jq --compact-output --arg language "$language" \
-    '.listings[] | select(.language == $language) | .title = "Retro-3DO"' \
+    '.listings[] | select(.language == $language) | .title = "a3DO"' \
     <<<"$existing")
   curl --fail --silent --show-error \
     --request PUT \

@@ -1,4 +1,4 @@
-// Retro-3DO front end: splash, library, settings and in-game quick menu.
+// a3DO front end: splash, library, settings and in-game quick menu.
 #pragma once
 
 #include <memory>
@@ -30,7 +30,9 @@ struct UiIntent {
     bool reset = false;
     bool start_demo = false;
     bool toggle_pause = false;
-    bool bios_chosen = false;
+    bool bios_chosen = false;      // desktop: a BIOS path from the file browser
+    bool pick_bios = false;        // Android: open the system file picker
+    bool use_builtin_bios = false; // return to the bundled opera-boot ROM
     std::string bios_path;
     std::string bios_name;
     bool disc_chosen = false;
@@ -47,7 +49,6 @@ struct UiIntent {
     bool cpu_scale_changed = false;
     u32 cpu_scale_percent = 100;
     bool ui_settings_changed = false;
-    bool bios_folder_chosen = false;
     bool games_folder_chosen = false;
     bool setup_finished = false;
     bool rescan_games = false;
@@ -79,13 +80,16 @@ public:
     void hide_launcher();
     void show_launcher() { show_launcher_ = true; }
 
-    void set_remembered_bios(const std::string& name, const std::string& target);
     void set_remembered_disc(const std::string& name, const std::string& target);
     void set_game_library(const std::vector<LibraryGame>& games);
-    void configure_setup(bool complete, const std::string& bios_folder_name,
-                         const std::string& bios_folder_target,
-                         const std::string& games_folder_name,
+    void configure_setup(bool complete, const std::string& games_folder_name,
                          const std::string& games_folder_target);
+    // Which BIOS the machine is running: the user's own (custom) or the
+    // built-in opera-boot. `message` explains a fallback or failure.
+    void set_bios_status(bool custom, const std::string& name,
+                         const std::string& message);
+    // The running game was stopped by the application (e.g. a BIOS change).
+    void end_session();
     void set_performance_visible(bool visible) { performance_visible_ = visible; }
     bool performance_visible() const { return performance_visible_; }
     void configure_video(int renderer_backend, bool widescreen, bool bezel,
@@ -125,21 +129,20 @@ public:
 private:
     enum class Page { Library, Settings, Artwork, Downloads, System, About };
     enum class Browsing { None, Bios, Disc };
-    enum class WizardStep { Welcome, Bios, Games, RetroMedia, Finish };
-    enum class WizardPick { None, Bios, Games };
 
     void release_ui_texture();
     void update_scale();
     void apply_safe_area();
     void update_touch_scroll();
     void draw_splash();
-    void draw_setup_wizard(retro3do_t* emu, UiIntent& intent);
+    void draw_setup_wizard(UiIntent& intent);
     void poll_setup_picker(UiIntent& intent);
     void draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
                        bool touch_editing, UiIntent& intent);
     void draw_library(retro3do_t* emu, UiIntent& intent);
     void draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
                        UiIntent& intent);
+    void draw_bios_panel(UiIntent& intent);
     void draw_pad_editor(TouchPad& touch, UiIntent& intent);
     void draw_artwork(UiIntent& intent);
     void draw_downloads(UiIntent& intent);
@@ -153,7 +156,6 @@ private:
     void open_quick_menu(bool emulating, UiIntent& intent);
     void wake_menu_button();
     void draw_file_browser(UiIntent& intent);
-    void load_splash_texture();
     SDL_Texture* artwork_texture(const std::string& game_name);
     void release_artwork_textures();
     void clear_artwork_textures();
@@ -196,10 +198,10 @@ private:
     bool scroll_dragging_ = false;
     char search_buffer_[128] = {};
     char library_group_ = 0;
-    WizardStep wizard_step_ = WizardStep::Welcome;
-    WizardPick wizard_pick_ = WizardPick::None;
-    std::string bios_folder_name_;
-    std::string bios_folder_target_;
+    bool picking_games_folder_ = false;
+    bool bios_custom_ = false;
+    std::string bios_name_;
+    std::string bios_message_;
     std::string games_folder_name_;
     std::string games_folder_target_;
     std::string actual_renderer_;
@@ -210,7 +212,6 @@ private:
     SDL_Texture* ui_texture_ = nullptr;
     int ui_texture_width_ = 0;
     int ui_texture_height_ = 0;
-    SDL_Texture* splash_texture_ = nullptr;
     std::unordered_map<std::string, ArtworkTexture> artwork_;
     std::string retro_media_type_ = "box2d";
     std::string retro_media_email_;
@@ -234,9 +235,7 @@ private:
     std::vector<LibraryDisc> active_discs_;
     size_t active_disc_ = 0;
 
-    char bios_path_buffer_[512] = {};
     char disc_path_buffer_[512] = {};
-    std::string bios_target_;
     std::string disc_target_;
 };
 

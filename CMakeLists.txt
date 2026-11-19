@@ -21,7 +21,7 @@ option(RETRO3DO_BUILD_TESTS "Build the host test suite" ON)
 # APPLE covers both; IOS is set by CMake when CMAKE_SYSTEM_NAME=iOS, so
 # "APPLE AND NOT IOS" is the macOS test used throughout this file.
 # ---------------------------------------------------------------------------
-set(RETRO3DO_BUNDLE_ID "com.crownparkcomputing.retro3DO" CACHE STRING
+set(RETRO3DO_BUNDLE_ID "com.izzy2lost.a3do" CACHE STRING
     "Bundle identifier for the iOS and macOS apps")
 set(RETRO3DO_APPLE_TEAM_ID "" CACHE STRING
     "Apple Developer Team ID. Leave empty for an unsigned local build")
@@ -131,9 +131,43 @@ target_include_directories(imgui PUBLIC ${IMGUI_DIR})
 target_link_libraries(imgui PUBLIC ${RETRO3DO_SDL_TARGET})
 
 # ---------------------------------------------------------------------------
+# The built-in system ROM.
+#
+# opera-boot (third_party/opera-boot, GPL-2.0-only) is an open-source boot ROM
+# that loads the OS from the disc, so the app can play games without a retail
+# BIOS. Its source is vendored so it can be changed, but it needs the 3DO
+# DevKit's ARM SDT compilers, so the build embeds the checked-in image and
+# tools/build-opera-boot.sh regenerates that image after a source change.
+# ---------------------------------------------------------------------------
+set(A3DO_BUILTIN_BIOS
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/opera-boot/prebuilt/opera-boot.bin
+    CACHE FILEPATH "System ROM compiled into the app as its default BIOS")
+# The upstream 2026-10-12 release image still carries the third-party 3DO logo
+# that src/banner.c no longer draws. Flag it until the ROM is rebuilt from the
+# vendored source, so it is never shipped by accident.
+file(SHA256 ${A3DO_BUILTIN_BIOS} A3DO_BUILTIN_BIOS_SHA256)
+if(A3DO_BUILTIN_BIOS_SHA256 STREQUAL
+   "6cbd0664c36e64c315b699b43dfc27c176597ef8f393279f199986fa5b6ba3bb")
+    message(WARNING
+        "The embedded opera-boot ROM is the upstream release, which still "
+        "contains the third-party 3DO logo artwork. Rebuild it from "
+        "third_party/opera-boot with tools/build-opera-boot.sh before "
+        "distributing a3DO.")
+endif()
+include(cmake/embed_binary.cmake)
+embed_binary(${A3DO_BUILTIN_BIOS}
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/opera_boot_rom.cpp kOperaBootRom)
+
+# The UI typeface: Roboto Medium (Apache-2.0), from Dear ImGui's bundled fonts.
+embed_binary(${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/roboto_medium_ttf.cpp kRobotoMediumTtf)
+
+# ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
 set(RETRO3DO_APP_SOURCES
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/opera_boot_rom.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/roboto_medium_ttf.cpp
     src/main.cpp
     src/app/path.cpp
     src/app/settings.cpp
@@ -181,8 +215,8 @@ if(APPLE)
     set_target_properties(retro3do PROPERTIES
         MACOSX_BUNDLE TRUE
         # Both bundles are named the same thing so one script can find either.
-        OUTPUT_NAME "Retro-3DO"
-        MACOSX_BUNDLE_BUNDLE_NAME "Retro-3DO"
+        OUTPUT_NAME "a3DO"
+        MACOSX_BUNDLE_BUNDLE_NAME "a3DO"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${RETRO3DO_BUNDLE_ID}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${RETRO3DO_BUILD_NUMBER}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${RETRO3DO_MARKETING_VERSION}"

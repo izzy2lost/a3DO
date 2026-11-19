@@ -80,13 +80,13 @@
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="0"/>
          -->
 
-        <activity android:name="com.crownparkcomputing.retro3do.Retro3DOActivity"
+        <activity android:name="com.izzy2lost.a3do.A3DOActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:preferMinimalPostProcessing="true"
-            android:theme="@style/Theme.Retro3DO"
+            android:theme="@style/Theme.A3DO"
             android:exported="true"
             >
             <intent-filter>

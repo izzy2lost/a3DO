@@ -15,7 +15,9 @@ These override defaults. Do not re-litigate them.
   independently structured algorithm used by each current module. Do not call
   the history clean-room; do not call the current old-port routines unchanged.
 - **Android must use SAF scoped-folder access only.** Never all-files access.
-- **applicationId stays `com.fourdo.android`.** Do not change it.
+- **applicationId is `com.izzy2lost.a3do`** and the app is named **a3DO**
+  (changed by the user on 2026-11-19 from `com.fourdo.android` / Retro-3DO).
+  This is a new Play identity; do not change it again.
 - **No custom animations or polish** ahead of emulation correctness.
 - **Emulation correctness before release plumbing.** No Play uploads, no
   release signing work, unless asked.

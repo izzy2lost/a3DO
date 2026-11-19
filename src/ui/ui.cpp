@@ -19,40 +19,72 @@
 #include "imgui_internal.h"
 #include "platform/android_storage.h"
 #include "platform/platform.h"
+#include "ui/embedded_font.h"
 
 namespace retro3do {
 namespace {
 
-const ImVec4 kCyan(0.18f, 0.84f, 0.88f, 1.0f);
-const ImVec4 kGreen(0.36f, 0.86f, 0.58f, 1.0f);
-const ImVec4 kAmber(1.00f, 0.68f, 0.28f, 1.0f);
-const ImVec4 kRed(1.00f, 0.37f, 0.38f, 1.0f);
-const ImVec4 kViolet(0.70f, 0.45f, 1.00f, 1.0f);
-const ImVec4 kPink(1.00f, 0.38f, 0.68f, 1.0f);
-const ImVec4 kBlue(0.30f, 0.58f, 1.00f, 1.0f);
-const ImVec4 kMuted(0.55f, 0.60f, 0.68f, 1.0f);
+// The theme takes its colours from the console's era: deep charcoal, with the
+// red, gold and blue of 3DO-branded hardware and packaging as the accents.
+const ImVec4 kRed(0.89f, 0.15f, 0.17f, 1.0f);      // #E3262B
+const ImVec4 kGold(0.99f, 0.74f, 0.10f, 1.0f);     // #FCBD1A
+const ImVec4 kBlue(0.27f, 0.47f, 0.98f, 1.0f);     // #4578FA
+const ImVec4 kGreen(0.30f, 0.82f, 0.50f, 1.0f);
+const ImVec4 kAmber(1.00f, 0.56f, 0.20f, 1.0f);    // warnings
+const ImVec4 kError(1.00f, 0.38f, 0.36f, 1.0f);
+const ImVec4 kText(0.95f, 0.95f, 0.97f, 1.0f);
+const ImVec4 kMuted(0.60f, 0.60f, 0.67f, 1.0f);
 
 ImU32 colour(const ImVec4& value) {
     return ImGui::ColorConvertFloat4ToU32(value);
 }
 
+// A red, gold and blue rule: the theme's signature, used under headings, the
+// navigation bar and the splash.
+void draw_tricolour_bar(ImDrawList* draw, const ImVec2& min, const ImVec2& max) {
+    const float third = (max.x - min.x) / 3.0f;
+    draw->AddRectFilled(min, ImVec2(min.x + third, max.y), colour(kRed));
+    draw->AddRectFilled(ImVec2(min.x + third, min.y),
+                        ImVec2(min.x + third * 2.0f, max.y), colour(kGold));
+    draw->AddRectFilled(ImVec2(min.x + third * 2.0f, min.y), max, colour(kBlue));
+}
+
+// Lays the tricolour bar into the current window's layout at `height` points.
+void tricolour_rule(float width, float height) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    draw_tricolour_bar(ImGui::GetWindowDrawList(), at,
+                       ImVec2(at.x + width, at.y + height));
+    ImGui::Dummy(ImVec2(width, height));
+}
+
+// "a3DO" with the 3, D and O in the three theme colours.
+float wordmark_width(float font_size) {
+    return ImGui::GetFont()->CalcTextSizeA(font_size, FLT_MAX, 0.0f, "a3DO").x;
+}
+
+void draw_wordmark(ImDrawList* draw, ImVec2 at, float font_size,
+                   float alpha = 1.0f) {
+    ImFont* font = ImGui::GetFont();
+    const char* letters[] = {"a", "3", "D", "O"};
+    const ImVec4 colours[] = {kText, kRed, kGold, kBlue};
+    for (int i = 0; i < 4; ++i) {
+        ImVec4 shade = colours[i];
+        shade.w *= alpha;
+        draw->AddText(font, font_size, at, colour(shade), letters[i]);
+        at.x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, letters[i]).x;
+    }
+}
+
 void page_heading(const char* title, const char* subtitle) {
-    ImGui::TextColored(kCyan, "%s", title);
-    if (ImGui::GetContentRegionAvail().x > ImGui::CalcTextSize(subtitle).x +
-                                             ImGui::GetStyle().ItemSpacing.x)
-        ImGui::SameLine();
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::TextColored(kText, "%s", title);
+    ImGui::SetWindowFontScale(1.0f);
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(kMuted, "%s", subtitle);
     ImGui::PopTextWrapPos();
-    ImGui::Separator();
-    ImGui::Spacing();
-}
-
-void section_heading(const char* title, const char* detail) {
-    ImGui::TextColored(kCyan, "%s", title);
-    if (detail != nullptr && detail[0] != '\0') {
-        ImGui::TextColored(kMuted, "%s", detail);
-    }
+    tricolour_rule(std::min(150.0f * ImGui::GetIO().FontGlobalScale,
+                            ImGui::GetContentRegionAvail().x),
+                   3.0f * ImGui::GetIO().FontGlobalScale);
     ImGui::Spacing();
 }
 
@@ -118,17 +150,16 @@ char card_initial(const std::string& name) {
 }
 
 ImVec4 card_accent(const std::string& name) {
-    static const ImVec4 palette[] = {kCyan, kViolet, kPink, kAmber, kGreen,
-                                     kBlue};
+    static const ImVec4 palette[] = {kRed, kGold, kBlue};
     unsigned hash = 2166136261u;
     for (unsigned char c : name) hash = (hash ^ c) * 16777619u;
     return palette[hash % (sizeof(palette) / sizeof(palette[0]))];
 }
 
 ImVec4 tinted(const ImVec4& colour_value, float strength, float alpha) {
-    return ImVec4(0.035f + colour_value.x * strength,
-                  0.045f + colour_value.y * strength,
-                  0.070f + colour_value.z * strength, alpha);
+    return ImVec4(0.055f + colour_value.x * strength,
+                  0.055f + colour_value.y * strength,
+                  0.068f + colour_value.z * strength, alpha);
 }
 
 void draw_card_title(ImDrawList* draw, const std::string& title,
@@ -183,33 +214,51 @@ bool Ui::init(SDL_Window* window, SDL_Renderer* renderer) {
 #endif
     io.IniFilename = nullptr;
 
+    // Roboto Medium, compiled in (third_party/imgui/misc/fonts, Apache-2.0).
+    // ImGui rasterises it at whatever size is drawn, so text stays sharp at
+    // phone and tablet scales where the default bitmap font turns blocky.
+    ImFontConfig font_config;
+    font_config.FontDataOwnedByAtlas = false;
+    io.Fonts->AddFontFromMemoryTTF(
+        const_cast<unsigned char*>(kRobotoMediumTtf),
+        static_cast<int>(kRobotoMediumTtf_size), 15.0f, &font_config);
+
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 0.0f;
     style.WindowBorderSize = 0.0f;
-    style.ChildRounding = 8.0f;
+    style.ChildRounding = 12.0f;
     style.ChildBorderSize = 1.0f;
-    style.FrameRounding = 6.0f;
-    style.PopupRounding = 8.0f;
+    style.FrameRounding = 8.0f;
+    style.FrameBorderSize = 0.0f;
+    style.PopupRounding = 12.0f;
     style.ScrollbarRounding = 8.0f;
-    style.GrabRounding = 6.0f;
+    style.GrabRounding = 8.0f;
     style.WindowPadding = ImVec2(18.0f, 18.0f);
     style.FramePadding = ImVec2(12.0f, 8.0f);
     style.ItemSpacing = ImVec2(10.0f, 10.0f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.035f, 0.045f, 0.070f, 1.0f);
-    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.055f, 0.070f, 0.105f, 1.0f);
-    style.Colors[ImGuiCol_Border] = ImVec4(0.14f, 0.19f, 0.26f, 1.0f);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.075f, 0.095f, 0.140f, 1.0f);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.11f, 0.16f, 0.22f, 1.0f);
-    style.Colors[ImGuiCol_Button] = ImVec4(0.09f, 0.13f, 0.19f, 1.0f);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.12f, 0.35f, 0.40f, 1.0f);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.12f, 0.55f, 0.60f, 1.0f);
-    style.Colors[ImGuiCol_Header] = ImVec4(0.10f, 0.28f, 0.34f, 1.0f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.12f, 0.38f, 0.43f, 1.0f);
-    style.Colors[ImGuiCol_CheckMark] = kCyan;
-    style.Colors[ImGuiCol_SliderGrab] = kCyan;
-    style.Colors[ImGuiCol_Text] = ImVec4(0.91f, 0.94f, 0.97f, 1.0f);
-    style.Colors[ImGuiCol_TextDisabled] = kMuted;
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg] = ImVec4(0.043f, 0.043f, 0.055f, 1.0f);       // #0B0B0E
+    c[ImGuiCol_ChildBg] = ImVec4(0.078f, 0.078f, 0.098f, 1.0f);        // #141419
+    c[ImGuiCol_PopupBg] = ImVec4(0.090f, 0.090f, 0.114f, 0.98f);
+    c[ImGuiCol_Border] = ImVec4(0.17f, 0.17f, 0.21f, 1.0f);
+    c[ImGuiCol_Separator] = ImVec4(0.17f, 0.17f, 0.21f, 1.0f);
+    c[ImGuiCol_FrameBg] = ImVec4(0.11f, 0.11f, 0.14f, 1.0f);
+    c[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.15f, 0.19f, 1.0f);
+    c[ImGuiCol_FrameBgActive] = ImVec4(0.18f, 0.18f, 0.23f, 1.0f);
+    c[ImGuiCol_Button] = ImVec4(0.13f, 0.13f, 0.165f, 1.0f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.42f, 0.10f, 0.11f, 1.0f);
+    c[ImGuiCol_ButtonActive] = kRed;
+    c[ImGuiCol_Header] = ImVec4(0.14f, 0.22f, 0.45f, 1.0f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(0.18f, 0.29f, 0.58f, 1.0f);
+    c[ImGuiCol_HeaderActive] = kBlue;
+    c[ImGuiCol_CheckMark] = kGold;
+    c[ImGuiCol_SliderGrab] = kGold;
+    c[ImGuiCol_SliderGrabActive] = kRed;
+    c[ImGuiCol_TextSelectedBg] = ImVec4(0.27f, 0.47f, 0.98f, 0.35f);
+    c[ImGuiCol_NavCursor] = kGold;
+    c[ImGuiCol_Text] = kText;
+    c[ImGuiCol_TextDisabled] = kMuted;
 
     // Bridge logical points to framebuffer pixels on Retina displays.
     const float density = SDL_GetWindowPixelDensity(window);
@@ -222,7 +271,6 @@ bool Ui::init(SDL_Window* window, SDL_Renderer* renderer) {
     if (!ImGui_ImplSDLRenderer3_Init(renderer)) return false;
 
     renderer_ = renderer;
-    load_splash_texture();
 
     splash_started_ms_ = SDL_GetTicks();
     last_pointer_activity_ms_ = splash_started_ms_;
@@ -238,13 +286,6 @@ void Ui::hide_launcher() {
     show_launcher_ = false;
     session_available_ = true;
     wake_menu_button();
-}
-
-void Ui::set_remembered_bios(const std::string& name,
-                             const std::string& target) {
-    std::snprintf(bios_path_buffer_, sizeof(bios_path_buffer_), "%s",
-                  name.empty() ? target.c_str() : name.c_str());
-    bios_target_ = target;
 }
 
 void Ui::set_remembered_disc(const std::string& name,
@@ -339,21 +380,6 @@ void Ui::clear_artwork_textures() {
     artwork_.clear();
 }
 
-void Ui::load_splash_texture() {
-    if (renderer_ == nullptr || splash_texture_ != nullptr) return;
-    SDL_Surface* surface = SDL_LoadBMP("retro3do-splash.bmp");
-    if (surface == nullptr) {
-        surface = SDL_LoadBMP("assets/branding/retro3do-splash.bmp");
-    }
-    if (surface == nullptr) return;
-    splash_texture_ = SDL_CreateTextureFromSurface(renderer_, surface);
-    SDL_DestroySurface(surface);
-    if (splash_texture_ != nullptr) {
-        SDL_SetTextureScaleMode(splash_texture_, SDL_SCALEMODE_LINEAR);
-        SDL_SetTextureBlendMode(splash_texture_, SDL_BLENDMODE_BLEND);
-    }
-}
-
 void Ui::release_artwork_textures() {
     for (auto& [name, item] : artwork_) {
         (void)name;
@@ -423,24 +449,29 @@ SDL_Texture* Ui::artwork_texture(const std::string& game_name) {
     return item.texture;
 }
 
-void Ui::configure_setup(bool complete, const std::string& bios_folder_name,
-                         const std::string& bios_folder_target,
-                         const std::string& games_folder_name,
+void Ui::configure_setup(bool complete, const std::string& games_folder_name,
                          const std::string& games_folder_target) {
     setup_complete_ = complete;
-    bios_folder_name_ = bios_folder_name;
-    bios_folder_target_ = bios_folder_target;
     games_folder_name_ = games_folder_name;
     games_folder_target_ = games_folder_target;
-    if (!complete) wizard_step_ = WizardStep::Welcome;
+}
+
+void Ui::set_bios_status(bool custom, const std::string& name,
+                         const std::string& message) {
+    bios_custom_ = custom;
+    bios_name_ = name;
+    bios_message_ = message;
+}
+
+void Ui::end_session() {
+    session_available_ = false;
+    quick_menu_ = false;
+    active_discs_.clear();
+    active_disc_ = 0;
 }
 
 void Ui::shutdown() {
     if (!initialised_) return;
-    if (splash_texture_ != nullptr) {
-        SDL_DestroyTexture(splash_texture_);
-        splash_texture_ = nullptr;
-    }
     clear_artwork_textures();
     release_ui_texture();
     if (renderer_ != nullptr) ImGui_ImplSDLRenderer3_Shutdown();
@@ -452,10 +483,6 @@ void Ui::shutdown() {
 
 void Ui::suspend_renderer() {
     if (!initialised_ || renderer_ == nullptr) return;
-    if (splash_texture_ != nullptr) {
-        SDL_DestroyTexture(splash_texture_);
-        splash_texture_ = nullptr;
-    }
     release_artwork_textures();
     release_ui_texture();
     ImGui_ImplSDLRenderer3_Shutdown();
@@ -470,7 +497,6 @@ bool Ui::resume_renderer(SDL_Renderer* renderer) {
     renderer_ = renderer;
     const float density = SDL_GetWindowPixelDensity(window_);
     if (density > 0.0f) SDL_SetRenderScale(renderer, density, density);
-    load_splash_texture();
     return true;
 }
 
@@ -620,7 +646,7 @@ UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
     } else if (!setup_complete_) {
         menu_requested_ = false;
         poll_setup_picker(intent);
-        draw_setup_wizard(emu, intent);
+        draw_setup_wizard(intent);
     } else if (touch_editing) {
         draw_pad_editor(touch, intent);
         touch_active = true;
@@ -661,7 +687,7 @@ void Ui::draw_pad_editor(TouchPad& touch, UiIntent& intent) {
     draw->AddRectFilled(viewport->Pos,
                         ImVec2(viewport->Pos.x + viewport->Size.x,
                                viewport->Pos.y + viewport->Size.y),
-                        IM_COL32(8, 12, 20, 245));
+                        IM_COL32(11, 11, 14, 245));
     touch.draw(viewport->WorkPos, viewport->WorkSize);
 
     ImGui::SetNextWindowPos(
@@ -694,62 +720,49 @@ void Ui::draw_splash() {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 top = viewport->Pos;
     const ImVec2 bottom(top.x + viewport->Size.x, top.y + viewport->Size.y);
-    draw->AddRectFilledMultiColor(top, bottom, IM_COL32(6, 11, 24, 255),
-                                  IM_COL32(8, 37, 52, 255),
-                                  IM_COL32(22, 8, 42, 255),
-                                  IM_COL32(6, 11, 24, 255));
+    draw->AddRectFilledMultiColor(top, bottom, IM_COL32(18, 18, 24, 255),
+                                  IM_COL32(18, 18, 24, 255),
+                                  IM_COL32(6, 6, 9, 255),
+                                  IM_COL32(6, 6, 9, 255));
 
+    // The wordmark fades in, the bar grows under it, then the strapline.
+    const float t = std::min(1.0f, (SDL_GetTicks() - splash_started_ms_) / 900.0f);
+    const float ease = 1.0f - (1.0f - t) * (1.0f - t);
+    const float size = std::min(96.0f * scale_, viewport->Size.y * 0.24f);
+    const float width = wordmark_width(size);
     const ImVec2 centre(top.x + viewport->Size.x * 0.5f,
-                        top.y + viewport->Size.y * 0.45f);
-    const float icon_size =
-        std::min(300.0f * scale_, viewport->Size.y * 0.70f);
-    if (splash_texture_ != nullptr) {
-        draw->AddImage(
-            ImTextureRef(static_cast<ImTextureID>(
-                reinterpret_cast<intptr_t>(splash_texture_))),
-            ImVec2(centre.x - icon_size * 0.5f,
-                   centre.y - icon_size * 0.5f),
-            ImVec2(centre.x + icon_size * 0.5f,
-                   centre.y + icon_size * 0.5f));
-    } else {
-        ImGui::SetWindowFontScale(2.55f);
-        const char* title = "RETRO-3DO";
-        const ImVec2 title_size = ImGui::CalcTextSize(title);
-        ImGui::SetCursorScreenPos(ImVec2(centre.x - title_size.x * 0.5f,
-                                        centre.y - title_size.y * 0.5f));
-        ImGui::TextUnformatted(title);
-        ImGui::SetWindowFontScale(1.0f);
-    }
+                        top.y + viewport->Size.y * 0.44f);
+    draw_wordmark(draw, ImVec2(centre.x - width * 0.5f, centre.y - size * 0.6f),
+                  size, ease);
+    const float bar_width = width * ease;
+    const float bar_top = centre.y + size * 0.5f;
+    draw_tricolour_bar(draw, ImVec2(centre.x - bar_width * 0.5f, bar_top),
+                       ImVec2(centre.x + bar_width * 0.5f, bar_top + 5.0f * scale_));
 
-    const char* strap = "THE INTERACTIVE MULTIPLAYER, REIMAGINED";
+    const char* strap = "3DO INTERACTIVE MULTIPLAYER EMULATOR";
     const ImVec2 strap_size = ImGui::CalcTextSize(strap);
     ImGui::SetCursorScreenPos(ImVec2(centre.x - strap_size.x * 0.5f,
-                                    centre.y + icon_size * 0.5f +
-                                        10.0f * scale_));
-    ImGui::TextColored(kCyan, "%s", strap);
+                                     bar_top + 20.0f * scale_));
+    ImGui::TextColored(ImVec4(kMuted.x, kMuted.y, kMuted.z, ease), "%s", strap);
     ImGui::End();
 }
 
 void Ui::poll_setup_picker(UiIntent& intent) {
-    if (wizard_pick_ == WizardPick::None) return;
+    if (!picking_games_folder_) return;
     const DocumentEntry picked = AndroidStorage::consume_picked_folder();
     if (picked.uri.empty()) return;
 
     intent.folder_path = picked.uri;
     intent.folder_name = picked.name;
-    if (wizard_pick_ == WizardPick::Bios) {
-        bios_folder_name_ = picked.name;
-        bios_folder_target_ = picked.uri;
-        intent.bios_folder_chosen = true;
-    } else {
-        games_folder_name_ = picked.name;
-        games_folder_target_ = picked.uri;
-        intent.games_folder_chosen = true;
-    }
-    wizard_pick_ = WizardPick::None;
+    games_folder_name_ = picked.name;
+    games_folder_target_ = picked.uri;
+    intent.games_folder_chosen = true;
+    picking_games_folder_ = false;
 }
 
-void Ui::draw_setup_wizard(retro3do_t* emu, UiIntent& intent) {
+// First run asks for one thing only: where the games are. The built-in BIOS
+// means there is nothing else to configure before playing.
+void Ui::draw_setup_wizard(UiIntent& intent) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -762,186 +775,75 @@ void Ui::draw_setup_wizard(retro3do_t* emu, UiIntent& intent) {
         viewport->WorkPos,
         ImVec2(viewport->WorkPos.x + viewport->WorkSize.x,
                viewport->WorkPos.y + viewport->WorkSize.y),
-        IM_COL32(6, 12, 25, 255), IM_COL32(7, 30, 43, 255),
-        IM_COL32(20, 8, 36, 255), IM_COL32(6, 12, 25, 255));
+        IM_COL32(18, 18, 24, 255), IM_COL32(18, 18, 24, 255),
+        IM_COL32(6, 6, 9, 255), IM_COL32(6, 6, 9, 255));
 
-    const float width = std::min(750.0f * scale_, viewport->WorkSize.x * 0.90f);
-    const float height = std::min(430.0f * scale_, viewport->WorkSize.y * 0.90f);
+    const float width = std::min(620.0f * scale_, viewport->WorkSize.x * 0.92f);
+    const float height = std::min(400.0f * scale_, viewport->WorkSize.y * 0.92f);
     ImGui::SetCursorPos(ImVec2((viewport->WorkSize.x - width) * 0.5f,
-                              (viewport->WorkSize.y - height) * 0.5f));
+                               (viewport->WorkSize.y - height) * 0.5f));
     ImGui::BeginChild("##setup_card", ImVec2(width, height),
                       ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(kCyan, "RETRO-3DO SETUP");
-    const int step = wizard_step_ == WizardStep::Welcome    ? 1
-                   : wizard_step_ == WizardStep::Bios       ? 2
-                   : wizard_step_ == WizardStep::Games      ? 3
-                   : wizard_step_ == WizardStep::RetroMedia ? 4
-                                                             : 5;
-    ImGui::SameLine();
-    ImGui::TextColored(kMuted, "STEP %d OF 5", step);
-    ImGui::Separator();
+
+    // Brand header: wordmark and the tricolour rule.
+    const float mark_size = 40.0f * scale_;
+    const ImVec2 mark_at = ImGui::GetCursorScreenPos();
+    draw_wordmark(ImGui::GetWindowDrawList(), mark_at, mark_size);
+    ImGui::Dummy(ImVec2(wordmark_width(mark_size), mark_size));
+    tricolour_rule(wordmark_width(mark_size), 4.0f * scale_);
     ImGui::Spacing();
 
-    switch (wizard_step_) {
-        case WizardStep::Welcome:
-            ImGui::SetWindowFontScale(1.55f);
-            ImGui::TextUnformatted("WELCOME TO RETRO-3DO");
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::TextWrapped(
-                "Setup needs access to two folders: one containing your legally "
-                "obtained 3DO BIOS and one containing your games. Android will "
-                "show its folder picker for each choice.");
-            ImGui::Spacing();
-            ImGui::TextColored(kGreen, "SCOPED STORAGE");
-            ImGui::TextWrapped(
-                "Retro-3DO only receives access to the folders you choose. It "
-                "does not request permission to read the rest of your device.");
-            ImGui::Spacing();
-            if (wide_button("BEGIN SETUP", 44.0f * scale_)) {
-                wizard_step_ = WizardStep::Bios;
-            }
-            ImGui::Spacing();
-            if (wide_button("TRY BUILT-IN HARDWARE DEMO", 44.0f * scale_)) {
-                // This bypasses setup for the current run only. No setting is
-                // saved, so the legal user-BIOS setup returns next launch.
-                setup_complete_ = true;
-                show_launcher_ = false;
-                session_available_ = true;
-                intent.start_demo = true;
-                wake_menu_button();
-            }
-            break;
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::TextUnformatted("Where are your games?");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
+    ImGui::TextWrapped(
+        "Choose the folder that holds your 3DO games (ISO, BIN/CUE, IMG or "
+        "CHD). Subfolders are scanned too, and a3DO can only see the folder "
+        "you choose.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
 
-        case WizardStep::Bios:
-            ImGui::SetWindowFontScale(1.45f);
-            ImGui::TextUnformatted("CHOOSE YOUR BIOS FOLDER");
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::TextWrapped(
-                "Select the folder containing your 3DO .rom or .bin BIOS. "
-                "Retro-3DO will find and validate it automatically.");
-            ImGui::Spacing();
-            ImGui::TextColored(bios_folder_target_.empty() ? kMuted : kCyan,
-                               "%s", bios_folder_target_.empty()
-                                         ? "No folder selected"
-                                         : bios_folder_name_.c_str());
-            if (wide_button(bios_folder_target_.empty() ? "SELECT BIOS FOLDER"
-                                                         : "CHANGE BIOS FOLDER",
-                            42.0f * scale_)) {
-                wizard_pick_ = WizardPick::Bios;
-                AndroidStorage::pick_folder();
-            }
-            if (wizard_pick_ == WizardPick::Bios) {
-                ImGui::TextColored(kAmber, "Waiting for Android folder selection...");
-            } else if (retro3do_bios_loaded(emu)) {
-                ImGui::TextColored(kGreen, "BIOS found and loaded successfully");
-            } else if (!bios_folder_target_.empty()) {
-                ImGui::TextColored(kRed,
-                                   "No valid BIOS was found. Choose another folder.");
-            }
-            ImGui::BeginDisabled(!retro3do_bios_loaded(emu));
-            if (wide_button("CONTINUE", 42.0f * scale_)) {
-                wizard_step_ = WizardStep::Games;
-            }
-            ImGui::EndDisabled();
-            break;
-
-        case WizardStep::Games:
-            ImGui::SetWindowFontScale(1.45f);
-            ImGui::TextUnformatted("CHOOSE YOUR GAMES FOLDER");
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::TextWrapped(
-                "Select the top-level folder containing your ISO, BIN/CUE, IMG "
-                "or CHD games. Subfolders are scanned automatically.");
-            ImGui::Spacing();
-            ImGui::TextColored(games_folder_target_.empty() ? kMuted : kCyan,
-                               "%s", games_folder_target_.empty()
-                                         ? "No folder selected"
-                                         : games_folder_name_.c_str());
-            if (wide_button(games_folder_target_.empty() ? "SELECT GAMES FOLDER"
-                                                          : "CHANGE GAMES FOLDER",
-                            42.0f * scale_)) {
-                wizard_pick_ = WizardPick::Games;
-                AndroidStorage::pick_folder();
-            }
-            if (wizard_pick_ == WizardPick::Games) {
-                ImGui::TextColored(kAmber, "Waiting for Android folder selection...");
-            } else if (!games_folder_target_.empty()) {
-                ImGui::TextColored(kGreen, "%zu game%s currently in the library",
-                                   library_.games().size(),
-                                   library_.games().size() == 1 ? "" : "s");
-            }
-            ImGui::BeginDisabled(games_folder_target_.empty());
-            if (wide_button("CONTINUE", 42.0f * scale_)) {
-                wizard_step_ = WizardStep::RetroMedia;
-            }
-            ImGui::EndDisabled();
-            break;
-
-        case WizardStep::RetroMedia:
-            ImGui::SetWindowFontScale(1.45f);
-            ImGui::TextUnformatted("RETROMEDIA (OPTIONAL)");
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::TextWrapped(
-                "Sign in to download library artwork. Administrator accounts "
-                "also unlock the private game-download catalogue.");
-            ImGui::Spacing();
-            if (retro_media_email_.empty()) {
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::InputTextWithHint("##wizard_rm_email", "Email",
-                                         retro_media_email_buffer_,
-                                         sizeof(retro_media_email_buffer_));
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::InputTextWithHint("##wizard_rm_password", "Password",
-                                         retro_media_password_buffer_,
-                                         sizeof(retro_media_password_buffer_),
-                                         ImGuiInputTextFlags_Password);
-                ImGui::BeginDisabled(retro_media_busy_);
-                if (wide_button("SIGN IN", 42.0f * scale_)) {
-                    retro_media_busy_ = true;
-                    retro_media_message_ = "Signing in...";
-                    intent.retro_media_login = true;
-                    intent.retro_media_email = retro_media_email_buffer_;
-                    intent.retro_media_password = retro_media_password_buffer_;
-                }
-                ImGui::EndDisabled();
-            } else {
-                ImGui::TextColored(kGreen, "SIGNED IN: %s",
-                                   retro_media_email_.c_str());
-                ImGui::TextColored(retro_media_admin_ ? kAmber : kMuted, "%s",
-                    retro_media_admin_ ? "Administrator game catalogue unlocked"
-                                       : "Artwork account connected");
-            }
-            if (!retro_media_message_.empty()) {
-                ImGui::TextColored(retro_media_busy_ ? kAmber : kMuted, "%s",
-                                   retro_media_message_.c_str());
-            }
-            ImGui::BeginDisabled(retro_media_busy_);
-            if (wide_button(retro_media_email_.empty() ? "SKIP FOR NOW" : "CONTINUE",
-                            42.0f * scale_)) {
-                wizard_step_ = WizardStep::Finish;
-            }
-            ImGui::EndDisabled();
-            break;
-
-        case WizardStep::Finish:
-            ImGui::SetWindowFontScale(1.55f);
-            ImGui::TextColored(kGreen, "SETUP COMPLETE");
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::TextWrapped(
-                "Your BIOS is ready and %zu game%s %s available. You can change "
-                "either folder later from the System page.",
-                library_.games().size(), library_.games().size() == 1 ? "" : "s",
-                library_.games().size() == 1 ? "is" : "are");
-            ImGui::Spacing();
-            if (wide_button("OPEN GAME LIBRARY", 46.0f * scale_)) {
-                setup_complete_ = true;
-                show_launcher_ = true;
-                page_ = Page::Library;
-                intent.setup_finished = true;
-            }
-            break;
+    const float button_height = 46.0f * scale_;
+    ImGui::PushStyleColor(ImGuiCol_Button, kRed);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.96f, 0.26f, 0.27f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.12f, 1.0f));
+    if (wide_button(games_folder_target_.empty() ? "CHOOSE GAMES FOLDER"
+                                                 : "CHOOSE A DIFFERENT FOLDER",
+                    button_height)) {
+        picking_games_folder_ = true;
+        AndroidStorage::pick_folder();
     }
+    ImGui::PopStyleColor(3);
+
+    if (picking_games_folder_) {
+        ImGui::TextColored(kGold, "Waiting for the folder picker...");
+    } else if (!games_folder_target_.empty()) {
+        ImGui::TextColored(kGreen, "%s  -  %zu game%s found",
+                           games_folder_name_.c_str(), library_.games().size(),
+                           library_.games().size() == 1 ? "" : "s");
+    } else {
+        ImGui::TextColored(kMuted, "No folder chosen yet");
+    }
+
+    ImGui::Spacing();
+    ImGui::BeginDisabled(games_folder_target_.empty());
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.22f, 0.45f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kBlue);
+    if (wide_button("OPEN MY LIBRARY", button_height)) {
+        setup_complete_ = true;
+        show_launcher_ = true;
+        page_ = Page::Library;
+        intent.setup_finished = true;
+    }
+    ImGui::PopStyleColor(2);
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::TextColored(kMuted,
+                       "A built-in open-source BIOS (opera-boot) is ready. You "
+                       "can add your own 3DO BIOS later in Settings.");
 
     ImGui::PopTextWrapPos();
     ImGui::EndChild();
@@ -953,18 +855,28 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::Begin("Retro-3DO", nullptr,
+    ImGui::Begin("a3DO", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    const ImVec2 nav_top = ImGui::GetCursorScreenPos();
-    const float total_width = ImGui::GetContentRegionAvail().x;
+    // The wordmark sits at the left of the navigation bar, vertically centred
+    // on its first row, and the buttons fill the rest of the width.
+    const ImVec2 bar_top = ImGui::GetCursorScreenPos();
+    const float mark_size = 30.0f * scale_;
+    const float mark_width = wordmark_width(mark_size) + 18.0f * scale_;
+    draw_wordmark(ImGui::GetWindowDrawList(),
+                  ImVec2(bar_top.x, bar_top.y + (40.0f * scale_ - mark_size) * 0.5f),
+                  mark_size);
+    const ImVec2 nav_top(bar_top.x + mark_width, bar_top.y);
+    ImGui::SetCursorScreenPos(nav_top);
+    const float full_width = ImGui::GetContentRegionAvail().x + mark_width;
+    const float total_width = full_width - mark_width;
     // Apple's guidance is that an iOS app is never quit by the app itself, and
     // a visible quit control is a known review rejection. The system gesture is
     // the way out of a handheld; on a desktop the button still is. It has to
     // come out of the count as well as the layout or the grid keeps its slot.
-    const int action_count = 6 + (RETRO3DO_PLATFORM_IOS ? 0 : 1) +
+    const int action_count = 5 + (RETRO3DO_PLATFORM_IOS ? 0 : 1) +
                              (retro_media_admin_ ? 1 : 0) +
                              (session_available_ ? 1 : 0);
     const float gap = ImGui::GetStyle().ItemSpacing.x;
@@ -975,33 +887,44 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const float nav_height = nav_rows * (40.0f * scale_ + ImGui::GetStyle().ItemSpacing.y);
     int nav_index = 0;
     auto next_nav = [&] {
-        if (nav_index++ % nav_columns != 0) ImGui::SameLine();
+        const int slot = nav_index++;
+        if (slot % nav_columns != 0) {
+            ImGui::SameLine();
+        } else {
+            ImGui::SetCursorScreenPos(ImVec2(
+                nav_top.x, nav_top.y + (slot / nav_columns) *
+                    (40.0f * scale_ + ImGui::GetStyle().ItemSpacing.y)));
+        }
     };
 
     auto nav_button = [&](const char* label, Page page) {
         next_nav();
         const bool selected = page_ == page;
+        // Pages cycle through the three theme colours.
+        ImVec4 accent = kRed;
+        if (page == Page::Settings || page == Page::System) accent = kGold;
+        if (page == Page::Artwork || page == Page::About) accent = kBlue;
         if (selected) {
-            ImVec4 accent = kAmber;
-            if (page == Page::Library) accent = kCyan;
-            if (page == Page::Settings) accent = kViolet;
-            if (page == Page::Artwork) accent = kPink;
-            if (page == Page::About) accent = kGreen;
-            ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.38f));
+            ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.30f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                  tinted(accent, 0.52f));
+                                  tinted(accent, 0.42f));
+            ImGui::PushStyleColor(ImGuiCol_Text, kText);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
         }
         if (ImGui::Button(label, ImVec2(action_width, 40.0f * scale_))) page_ = page;
-        if (selected) ImGui::PopStyleColor(2);
+        if (selected) {
+            // An accent underline marks the current page.
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(min.x + 10.0f * scale_, max.y - 3.0f * scale_),
+                ImVec2(max.x - 10.0f * scale_, max.y), colour(accent),
+                2.0f * scale_);
+        }
+        ImGui::PopStyleColor(selected ? 3 : 1);
     };
     nav_button("LIBRARY", Page::Library);
-    next_nav();
-    if (ImGui::Button("DEMO", ImVec2(action_width, 40.0f * scale_))) {
-        intent.start_demo = true;
-        session_available_ = true;
-        show_launcher_ = false;
-        wake_menu_button();
-    }
     nav_button("SETTINGS", Page::Settings);
     nav_button("ARTWORK", Page::Artwork);
     if (retro_media_admin_) {
@@ -1011,7 +934,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     nav_button("ABOUT", Page::About);
     if (session_available_) {
         next_nav();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.34f, 0.27f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.36f, 0.22f, 1.0f));
         if (ImGui::Button("RESUME", ImVec2(action_width, 40.0f * scale_))) {
             show_launcher_ = false;
             wake_menu_button();
@@ -1025,7 +948,10 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         intent.quit = true;
     }
 #endif
-    ImGui::SetCursorScreenPos(ImVec2(nav_top.x, nav_top.y + nav_height));
+    // Full-width tricolour rule under the bar.
+    ImGui::SetCursorScreenPos(ImVec2(bar_top.x, nav_top.y + nav_height));
+    tricolour_rule(full_width, 3.0f * scale_);
+    ImGui::Spacing();
     const ImGuiWindowFlags page_flags = ImGuiWindowFlags_NoScrollbar;
     if (page_ != drawn_page_) {
         ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
@@ -1049,7 +975,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
 }
 
 void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
-    alphabet_filter(library_group_, kCyan, scale_);
+    alphabet_filter(library_group_, kRed, scale_);
 
     const float rescan_width = 165.0f * scale_;
     const bool narrow_search = ImGui::GetContentRegionAvail().x < 420.0f * scale_;
@@ -1059,7 +985,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                              sizeof(search_buffer_));
     if (!narrow_search) ImGui::SameLine();
     ImGui::BeginDisabled(games_folder_target_.empty());
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.35f, 0.39f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.22f, 0.45f, 1.0f));
     if (ImGui::Button("RESCAN GAMES", ImVec2(narrow_search ? -1.0f : rescan_width, 0.0f))) {
         intent.rescan_games = true;
     }
@@ -1203,11 +1129,10 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                 ImVec2(content_left,
                        card_bottom.y - padding - button_height));
             ImGui::BeginDisabled(!retro3do_bios_loaded(emu) || retro3do_demo_loaded(emu));
-            ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.13f));
+            ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.22f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                  tinted(accent, 0.30f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                  tinted(accent, 0.46f));
+                                  tinted(accent, 0.55f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
             if (ImGui::Button("PLAY",
                               ImVec2(card_width - padding * 2.0f, 0.0f))) {
                 intent.disc_chosen = true;
@@ -1234,9 +1159,9 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                     ImVec2(badge_min.x - 5.0f * scale_, badge_min.y - 2.0f * scale_),
                     ImVec2(card_bottom.x - 6.0f * scale_,
                            badge_min.y + badge_size.y + 2.0f * scale_),
-                    IM_COL32(12, 20, 34, 230), 4.0f * scale_);
+                    IM_COL32(14, 14, 18, 230), 4.0f * scale_);
                 draw->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.72f,
-                              badge_min, colour(kAmber), badge.c_str());
+                              badge_min, colour(kGold), badge.c_str());
             }
             ImGui::PopID();
     }
@@ -1249,15 +1174,18 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
         ImGui::TextColored(
             kAmber,
             retro3do_demo_loaded(emu)
-                ? "The built-in demo cannot boot games. Load your 3DO BIOS on the System page."
-                : "Load a 3DO BIOS on the System page before playing.");
+                ? "The hardware demo cannot boot games. Restart a3DO to return to the BIOS."
+                : "No BIOS is loaded. Choose one in Settings.");
     }
     ImGui::EndChild();
 }
 
 void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
                        UiIntent& intent) {
-    page_heading("SETTINGS", "Controls and machine timing");
+    page_heading("SETTINGS", "BIOS, controls and machine timing");
+
+    draw_bios_panel(intent);
+    ImGui::Spacing();
 
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float available_width = ImGui::GetContentRegionAvail().x;
@@ -1312,9 +1240,79 @@ void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
     }
 
     ImGui::Separator();
-    ImGui::TextColored(kPink, "PERFORMANCE DISPLAY");
+    ImGui::TextColored(kRed, "PERFORMANCE DISPLAY");
     if (ImGui::Checkbox("Show in-game performance HUD", &performance_visible_)) {
         intent.ui_settings_changed = true;
+    }
+    end_panel();
+    ImGui::PopStyleVar();
+}
+
+// The BIOS choice. The built-in opera-boot needs no files; a real BIOS is an
+// option for anyone who has one, and can be put back to built-in at any time.
+void Ui::draw_bios_panel(UiIntent& intent) {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(10.0f * scale_, 10.0f * scale_));
+    begin_panel("##bios_settings", ImGui::GetContentRegionAvail().x, true);
+    ImGui::TextColored(kRed, "SYSTEM BIOS");
+
+    // Status pill: which ROM the machine is running.
+    const char* tag = bios_custom_ ? "YOUR BIOS" : "BUILT-IN";
+    const ImVec4 tag_colour = bios_custom_ ? kGold : kBlue;
+    const ImVec2 tag_size = ImGui::CalcTextSize(tag);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const ImVec2 pad(8.0f * scale_, 3.0f * scale_);
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        at, ImVec2(at.x + tag_size.x + pad.x * 2.0f, at.y + tag_size.y + pad.y * 2.0f),
+        colour(tinted(tag_colour, 0.40f)), 50.0f);
+    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x + pad.x, at.y + pad.y),
+                                        colour(kText), tag);
+    ImGui::Dummy(ImVec2(tag_size.x + pad.x * 2.0f, tag_size.y + pad.y * 2.0f));
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + pad.y);
+    ImGui::TextUnformatted(bios_name_.empty() ? "None" : bios_name_.c_str());
+
+    ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
+    ImGui::TextWrapped(
+        bios_custom_
+            ? "a3DO is using the BIOS you supplied. Switch back to the built-in "
+              "BIOS at any time."
+            : "opera-boot is an open-source boot ROM that starts the operating "
+              "system on the game disc, so no BIOS file is needed. If you own a "
+              "retail 3DO BIOS you can use it instead.");
+    ImGui::PopStyleColor();
+
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float row = ImGui::GetContentRegionAvail().x;
+    const bool two_buttons = bios_custom_;
+    const float button_width =
+        row >= 460.0f * scale_ && two_buttons ? (row - gap) * 0.5f : -1.0f;
+    ImGui::PushStyleColor(ImGuiCol_Button, tinted(kGold, 0.24f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, tinted(kGold, 0.40f));
+    if (ImGui::Button(bios_custom_ ? "CHOOSE A DIFFERENT BIOS..."
+                                   : "USE MY OWN BIOS...",
+                      ImVec2(button_width, 40.0f * scale_))) {
+        if (AndroidStorage::available()) {
+            intent.pick_bios = true;
+            bios_message_ = "Choose a 3DO BIOS file (.bin or .rom)";
+        } else {
+            browsing_ = Browsing::Bios;
+            browser_.open("Choose a BIOS image", {".rom", ".bin"});
+        }
+    }
+    ImGui::PopStyleColor(2);
+    if (two_buttons) {
+        if (button_width > 0.0f) ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, tinted(kBlue, 0.24f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, tinted(kBlue, 0.40f));
+        if (ImGui::Button("USE BUILT-IN BIOS", ImVec2(button_width, 40.0f * scale_))) {
+            intent.use_builtin_bios = true;
+        }
+        ImGui::PopStyleColor(2);
+    }
+    if (!bios_message_.empty()) ImGui::TextColored(kAmber, "%s", bios_message_.c_str());
+    if (session_available_) {
+        ImGui::TextColored(kMuted, "Changing the BIOS ends the game in progress.");
     }
     end_panel();
     ImGui::PopStyleVar();
@@ -1331,10 +1329,10 @@ void Ui::draw_artwork(UiIntent& intent) {
                         ImVec2(10.0f * scale_, 10.0f * scale_));
 
     begin_panel("##retromedia_account", column_width, stacked);
-    ImGui::TextColored(kViolet, "RETROMEDIA ACCOUNT");
+    ImGui::TextColored(kBlue, "RETROMEDIA ACCOUNT");
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
     ImGui::TextWrapped(
-        "Sign in with your registered account. Retro-3DO stores only the "
+        "Sign in with your registered account. a3DO stores only the "
         "encrypted session; passwords are never saved.");
     ImGui::PopStyleColor();
 
@@ -1376,7 +1374,7 @@ void Ui::draw_artwork(UiIntent& intent) {
 
     if (!stacked) ImGui::SameLine();
     begin_panel("##retromedia_downloads", column_width, stacked);
-    ImGui::TextColored(kCyan, "GAME CARD ARTWORK");
+    ImGui::TextColored(kGold, "GAME CARD ARTWORK");
     ImGui::TextColored(kMuted, "%zu game%s in this library",
                        library_.games().size(),
                        library_.games().size() == 1 ? "" : "s");
@@ -1517,7 +1515,7 @@ void Ui::draw_downloads(UiIntent& intent) {
 }
 
 void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
-    page_heading("SYSTEM", "Renderer, screen presentation and storage");
+    page_heading("SYSTEM", "Renderer, display, disc and games folder");
 
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float available_width = ImGui::GetContentRegionAvail().x;
@@ -1547,7 +1545,7 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     }
 
     ImGui::Separator();
-    ImGui::TextColored(kViolet, "CUSTOM ADRENO / TURNIP DRIVER");
+    ImGui::TextColored(kBlue, "CUSTOM ADRENO / TURNIP DRIVER");
     ImGui::TextColored(gpu_driver_name_.empty() ? kMuted : kGreen, "%s",
                        gpu_driver_name_.empty() ? "System GPU driver"
                                                 : gpu_driver_name_.c_str());
@@ -1570,7 +1568,7 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     }
 
     ImGui::Separator();
-    ImGui::TextColored(kPink, "DISPLAY");
+    ImGui::TextColored(kRed, "DISPLAY");
     int aspect = widescreen_ ? 1 : 0;
     if (ImGui::RadioButton("4:3 ORIGINAL", &aspect, 0)) {
         widescreen_ = false;
@@ -1590,30 +1588,6 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
 
     if (!stacked) ImGui::SameLine();
     begin_panel("##storage_system", column_width, stacked);
-    ImGui::TextColored(kAmber, "3DO SYSTEM ROM");
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::InputTextWithHint("##bios", "ROM or BIN path", bios_path_buffer_,
-                                 sizeof(bios_path_buffer_))) {
-        bios_target_.clear();
-    }
-    if (ImGui::Button("BROWSE##bios", ImVec2(column_width * 0.48f, 0.0f))) {
-        browsing_ = Browsing::Bios;
-        browser_.open("Choose a BIOS image", {".rom", ".bin"});
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("LOAD##bios", ImVec2(-1.0f, 0.0f))) {
-        intent.bios_chosen = true;
-        intent.bios_path = bios_target_.empty() ? std::string(bios_path_buffer_)
-                                                 : bios_target_;
-        intent.bios_name = bios_path_buffer_;
-    }
-    ImGui::TextColored(retro3do_bios_loaded(emu) ? kGreen : kAmber,
-                       retro3do_demo_loaded(emu)
-                           ? "Built-in original demo ROM loaded"
-                           : (retro3do_bios_loaded(emu) ? "BIOS loaded - system ready"
-                                                   : "No BIOS loaded"));
-
-    ImGui::Separator();
     ImGui::TextColored(kGreen, "INSERTED DISC");
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::InputTextWithHint("##disc", "ISO, BIN/CUE, IMG or CHD",
@@ -1652,21 +1626,19 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     }
 
     ImGui::Separator();
-    ImGui::TextColored(kCyan, "STORAGE FOLDERS");
-    ImGui::Text("BIOS: %.42s", bios_folder_name_.empty()
-                                   ? "Not configured" : bios_folder_name_.c_str());
-    ImGui::Text("Games: %.41s", games_folder_name_.empty()
-                                    ? "Not configured" : games_folder_name_.c_str());
-    if (ImGui::Button("RUN FOLDER SETUP", ImVec2(-1.0f, 0.0f))) {
+    ImGui::TextColored(kBlue, "GAMES FOLDER");
+    ImGui::Text("%.48s", games_folder_name_.empty()
+                             ? "Not configured" : games_folder_name_.c_str());
+    if (AndroidStorage::available() &&
+        ImGui::Button("CHANGE GAMES FOLDER", ImVec2(-1.0f, 0.0f))) {
         setup_complete_ = false;
-        wizard_step_ = WizardStep::Welcome;
     }
     end_panel();
     ImGui::PopStyleVar();
 }
 
 void Ui::draw_about() {
-    page_heading("ABOUT RETRO-3DO", "A new, mobile-first 3DO emulator");
+    page_heading("ABOUT a3DO", "A mobile-first 3DO emulator");
 
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float available_width = ImGui::GetContentRegionAvail().x;
@@ -1676,13 +1648,16 @@ void Ui::draw_about() {
                         ImVec2(10.0f * scale_, 10.0f * scale_));
 
     begin_panel("##about_story", column_width, stacked);
-    ImGui::SetWindowFontScale(1.35f);
-    ImGui::TextColored(kCyan, "RETRO-3DO");
+    {
+        const float size = 36.0f * scale_;
+        draw_wordmark(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), size);
+        ImGui::Dummy(ImVec2(wordmark_width(size), size));
+    }
     ImGui::SetWindowFontScale(0.88f);
-    ImGui::TextColored(kMuted, "Version 2.1.1  |  September 2026");
+    ImGui::TextColored(kMuted, "Version 2.1.3");
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Retro-3DO is a brand-new 3DO emulator implementation, designed and "
+        "a3DO is a 3DO emulator implementation, designed and "
         "built as its own modern C++ codebase for phones, handhelds, tablets "
         "and desktops. It is not a re-skinned legacy core.");
     ImGui::Spacing();
@@ -1703,17 +1678,22 @@ void Ui::draw_about() {
     if (!stacked) ImGui::SameLine();
     begin_panel("##about_technology", column_width, stacked);
     ImGui::SetWindowFontScale(0.88f);
-    ImGui::TextColored(kViolet, "THE EMULATED SYSTEM");
+    ImGui::TextColored(kBlue, "THE EMULATED SYSTEM");
     ImGui::TextWrapped(
         "Project implementations cover the ARM60, CLIO timing and interrupts, "
         "MADAM/CEL graphics and matrix hardware, VDLP display lists, DSPP "
         "audio, SPORT memory operations, XBUS CD-ROM and chained controllers.");
     ImGui::Spacing();
+    ImGui::TextColored(kGold, "BUILT-IN BIOS");
+    ImGui::TextWrapped(
+        "opera-boot by trapexit, an open-source 3DO boot ROM licensed under "
+        "GPL-2.0. Its complete source ships with a3DO's source code.");
+    ImGui::Spacing();
     ImGui::TextColored(kGreen, "LICENCE & OWNERSHIP");
     ImGui::TextWrapped(
-        "Project-owned code: MIT License. Copyright (c) 2026 Crown Park "
-        "Computing. MIT permits use, modification, distribution and sale; "
-        "bundled components retain their own permissive licences.");
+        "Application and emulation core: MIT License, Copyright (c) 2026 Crown "
+        "Park Computing. Bundled components keep their own licences: SDL3, "
+        "Dear ImGui, Roboto, AdrenoTools and opera-boot.");
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
     ImGui::TextWrapped(
         "Licence notices do not replace third-party rights clearance; see "
@@ -1727,11 +1707,11 @@ void Ui::draw_about() {
         "and device testing. Opera/FreeDO was also consulted historically as a "
         "compatibility reference; the project does not claim clean-room history.");
     ImGui::Spacing();
-    ImGui::TextColored(kPink, "INCLUDED FEATURES");
+    ImGui::TextColored(kRed, "INCLUDED FEATURES");
     ImGui::TextWrapped(
-        "ISO/BIN/CUE/IMG/CHD | live multi-disc swap | gamepad and touch "
-        "controls | RetroMedia artwork/admin catalogue | shared mobile and "
-        "desktop core");
+        "Built-in BIOS | ISO/BIN/CUE/IMG/CHD | live multi-disc swap | gamepad "
+        "and touch controls | RetroMedia artwork | shared mobile and desktop "
+        "core");
     end_panel();
     ImGui::PopStyleVar();
 }
@@ -1804,26 +1784,33 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         viewport->Pos,
         ImVec2(viewport->Pos.x + viewport->Size.x,
                viewport->Pos.y + viewport->Size.y),
-        IM_COL32(2, 5, 12, 180));
+        IM_COL32(4, 4, 6, 190));
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(
-        ImVec2(std::min(465.0f * scale_, viewport->WorkSize.x * 0.88f),
-               std::min(510.0f * scale_, viewport->WorkSize.y * 0.92f)),
-        ImGuiCond_Always);
+    // Fixed width, height fitted to the contents up to the screen; anything
+    // beyond that scrolls (by swipe, via update_touch_scroll) instead of
+    // being cut off.
+    const float menu_width = std::min(465.0f * scale_, viewport->WorkSize.x * 0.88f);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(menu_width, 0.0f),
+        ImVec2(menu_width, viewport->WorkSize.y * 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale_);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::Begin("##quick_menu", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar(2);
     ImGui::PushTextWrapPos(0.0f);
     ImGui::SetWindowFontScale(1.5f);
-    ImGui::TextColored(kCyan, "GAME MENU");
+    ImGui::TextColored(kText, "GAME MENU");
     ImGui::SetWindowFontScale(1.0f);
     ImGui::TextColored(kMuted, "Game paused - machine timing is preserved");
-    ImGui::Separator();
+    tricolour_rule(ImGui::GetContentRegionAvail().x, 3.0f * scale_);
 
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.35f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.36f, 0.22f, 1.0f));
     if (wide_button("RESUME", 42.0f * scale_)) {
         quick_menu_ = false;
         if (resume_after_menu_ && !emulating) intent.toggle_pause = true;
@@ -1831,7 +1818,7 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
     ImGui::PopStyleColor();
 
     ImGui::Spacing();
-    ImGui::TextColored(kCyan, "ON-SCREEN CONTROLLER");
+    ImGui::TextColored(kGold, "ON-SCREEN CONTROLLER");
     if (ImGui::Checkbox("Enabled", &touch_visible)) {
         intent.toggle_touch_controls = true;
     }
@@ -1843,7 +1830,7 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
     ImGui::EndDisabled();
 
     ImGui::Spacing();
-    ImGui::TextColored(kCyan, "ARM CPU BOOST");
+    ImGui::TextColored(kGold, "ARM CPU BOOST");
     int cpu = static_cast<int>(retro3do_get_cpu_scale_percent(emu));
     const int values[] = {100, 125, 150};
     const char* labels[] = {"100%", "125%", "150%"};
@@ -1877,17 +1864,26 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
 
     ImGui::Spacing();
     ImGui::Separator();
-    if (ImGui::Button("RESET GAME", ImVec2(-1.0f, 0.0f))) {
+    // The three ways out share one row so the menu fits a landscape phone.
+    const int exits = RETRO3DO_PLATFORM_IOS ? 2 : 3;
+    const float exit_gap = ImGui::GetStyle().ItemSpacing.x;
+    const float exit_width =
+        (ImGui::GetContentRegionAvail().x - exit_gap * (exits - 1)) / exits;
+    if (ImGui::Button("RESET", ImVec2(exit_width, 40.0f * scale_))) {
         intent.reset = true;
         quick_menu_ = false;
     }
-    if (ImGui::Button("RETURN TO LIBRARY", ImVec2(-1.0f, 0.0f))) {
+    ImGui::SameLine();
+    if (ImGui::Button("LIBRARY", ImVec2(exit_width, 40.0f * scale_))) {
         page_ = Page::Library;
         show_launcher_ = true;
         quick_menu_ = false;
     }
 #if !RETRO3DO_PLATFORM_IOS
-    if (ImGui::Button("EXIT RETRO-3DO", ImVec2(-1.0f, 0.0f))) intent.quit = true;
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, tinted(kRed, 0.25f));
+    if (ImGui::Button("EXIT", ImVec2(exit_width, 40.0f * scale_))) intent.quit = true;
+    ImGui::PopStyleColor();
 #endif
     ImGui::PopTextWrapPos();
     ImGui::End();
@@ -1899,9 +1895,6 @@ void Ui::draw_file_browser(UiIntent& intent) {
     if (!browser_.draw(&picked, &picked_name)) return;
 
     if (browsing_ == Browsing::Bios) {
-        std::snprintf(bios_path_buffer_, sizeof(bios_path_buffer_), "%s",
-                      picked_name.empty() ? picked.c_str() : picked_name.c_str());
-        bios_target_ = picked;
         intent.bios_chosen = true;
         intent.bios_path = picked;
         intent.bios_name = picked_name;

@@ -8,8 +8,8 @@
          into a display cutout: without the cutout mode a notched device
          letterboxes the whole app into a black band, which looks exactly like a
          broken renderer rather than a layout setting. -->
-    <style name="Theme.Retro3DO" parent="android:Theme.NoTitleBar.Fullscreen">
+    <style name="Theme.A3DO" parent="android:Theme.NoTitleBar.Fullscreen">
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">@color/colorPrimaryDark</item>
     </style>
 </resources>

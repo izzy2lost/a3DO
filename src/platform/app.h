@@ -101,7 +101,11 @@ private:
     void save_library();
     void load_retro_media_artwork();
     void remember_game(const std::string& name, const std::string& target);
-    void use_bios_folder(const std::string& name, const std::string& target);
+    bool load_builtin_bios();
+    void apply_bios_selection();
+    void use_custom_bios(const std::string& path, const std::string& name);
+    void begin_bios_change();
+    void finish_bios_change();
     void scan_games_folder(const std::string& name, const std::string& target);
     void load_nvram();
     void save_nvram();

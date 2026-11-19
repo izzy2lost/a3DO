@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPrimary">#3F51B5</color>
-    <color name="colorPrimaryDark">#303F9F</color>
-    <color name="colorAccent">#FF4081</color>
+    <!-- The a3DO theme: charcoal with the 3DO-era red, gold and blue. -->
+    <color name="colorPrimary">#E3262B</color>
+    <color name="colorPrimaryDark">#0B0B0E</color>
+    <color name="colorAccent">#FCBD1A</color>
 </resources>

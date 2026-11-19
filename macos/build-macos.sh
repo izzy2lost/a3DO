@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Retro-3DO.app for macOS, natively on a Mac.
+# Builds a3DO.app for macOS, natively on a Mac.
 #
 # There is no macOS front end to build. The emulator, the UI and the platform
 # layer are the same sources the Linux, Android and iOS builds use; SDL supplies
@@ -59,7 +59,7 @@ cmake -S "$REPO_ROOT" -B "$BUILD_DIR" -G "$GENERATOR" \
 echo "==> building"
 cmake --build "$BUILD_DIR" --config Release --parallel
 
-APP="$(find "$BUILD_DIR" -maxdepth 4 -name 'Retro-3DO.app' -print -quit)"
+APP="$(find "$BUILD_DIR" -maxdepth 4 -name 'a3DO.app' -print -quit)"
 [ -n "$APP" ] || { echo "FATAL: build finished but no .app was produced" >&2; exit 1; }
 
 echo "==> running the host test suite"
@@ -73,7 +73,7 @@ echo "==> running the host test suite"
 
 echo
 echo "Built: $APP"
-file "$APP/Contents/MacOS/Retro-3DO" || true
+file "$APP/Contents/MacOS/a3DO" || true
 echo
 if [ -z "$TEAM_ID" ]; then
     cat <<'EOF'
@@ -85,8 +85,8 @@ short version is a Developer ID signature plus notarisation:
   codesign --deep --force --options runtime --timestamp \
       --entitlements macos/Retro3DO.entitlements \
       -s "Developer ID Application: <name> (<team>)" "<app>"
-  ditto -c -k --keepParent "<app>" Retro-3DO.zip
-  xcrun notarytool submit Retro-3DO.zip --keychain-profile <profile> --wait
+  ditto -c -k --keepParent "<app>" a3DO.zip
+  xcrun notarytool submit a3DO.zip --keychain-profile <profile> --wait
   xcrun stapler staple "<app>"
 EOF
 fi

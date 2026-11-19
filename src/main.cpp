@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
 
     if (!app.init()) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", app.last_error().c_str());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Retro-3DO",
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "a3DO",
                                  app.last_error().c_str(), nullptr);
         return 1;
     }

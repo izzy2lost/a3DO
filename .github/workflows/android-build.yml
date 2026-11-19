@@ -42,7 +42,7 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x android/gradlew
 
-      - name: Apply Retro-3DO SDL Vulkan fixes
+      - name: Apply SDL Vulkan fixes
         run: git -C third_party/SDL apply ../../patches/sdl-vulkan-android.patch
 
       - name: Check signing secrets
