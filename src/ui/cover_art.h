@@ -23,6 +23,9 @@
 
 namespace retro3do {
 
+// Which release a cover or a game belongs to. PAL covers count as Europe.
+enum class CoverRegion { us = 0, eu = 1, jp = 2 };
+
 class CoverIndex {
 public:
     // `files` are bare file names inside `directory`.
@@ -30,18 +33,32 @@ public:
                  const std::vector<std::string>& files);
 
     // Full path of the best cover for a library title, or "" when none fits.
+    // A Japanese or European release gets its own region's cover when there
+    // is one, and the US cover otherwise.
     std::string find(const std::string& game_name) const;
 
     bool empty() const { return by_key_.empty(); }
     size_t size() const { return by_key_.size(); }
 
     // Lower-case letters and digits only, with region tags, a leading or
-    // trailing "the", the gallery's "3do_" prefix and variant suffixes such as
-    // "_au" or "--2-" removed. Sets *variant when a suffix was dropped.
-    static std::string key(const std::string& name, bool* variant = nullptr);
+    // trailing "the", the gallery's "3do_" prefix and suffixes such as "_jp",
+    // "_au" or "--2-" removed. Sets *variant when a numbered suffix was
+    // dropped, and *region from a region suffix (US when there is none).
+    static std::string key(const std::string& name, bool* variant = nullptr,
+                           CoverRegion* region = nullptr);
+
+    // The region a library title's tags name: "(Japan)" is Japanese,
+    // "(Europe)" or a European country is PAL, anything else is US.
+    static CoverRegion title_region(const std::string& game_name);
 
 private:
-    std::unordered_map<std::string, std::string> by_key_;   // key -> path
+    struct Entry {
+        std::string path[3];     // indexed by CoverRegion
+        bool variant[3] = {false, false, false};
+    };
+    const Entry* lookup(const std::string& key) const;
+
+    std::unordered_map<std::string, Entry> by_key_;
 };
 
 // One decoded cover, already split. Back and spine are empty for a

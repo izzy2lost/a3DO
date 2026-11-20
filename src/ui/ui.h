@@ -29,6 +29,8 @@ class TouchPad;
 // frame, keeping storage and machine mutations out of the drawing code.
 struct UiIntent {
     bool quit = false;
+    bool download_covers = false;
+    bool cancel_cover_download = false;
     bool reset = false;
     bool start_demo = false;
     bool toggle_pause = false;
@@ -89,6 +91,8 @@ public:
     // Box art for the carousel: image files (bare names) inside `directory`.
     void set_cover_files(const std::string& directory,
                          const std::vector<std::string>& files);
+    void set_cover_download_status(bool running, int done, int total,
+                                   const std::string& message);
     bool cover_view() const { return cover_view_; }
     void set_cover_view(bool on) { cover_view_ = on; }
     void configure_setup(bool complete, const std::string& games_folder_name,
@@ -152,6 +156,7 @@ private:
     void draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
                        bool touch_editing, UiIntent& intent);
     void draw_library(retro3do_t* emu, UiIntent& intent);
+    void draw_cover_download(UiIntent& intent, float width);
     void draw_cover_flow(retro3do_t* emu,
                          const std::vector<const LibraryGame*>& games,
                          UiIntent& intent);
@@ -252,6 +257,9 @@ private:
     std::unordered_map<std::string, CoverTexture> cover_textures_;  // file -> GPU
     u64 cover_frame_ = 0;
     bool cover_view_ = true;
+    bool cover_download_running_ = false;
+    int cover_download_done_ = 0, cover_download_total_ = 0;
+    std::string cover_download_message_;
     float carousel_pos_ = 0.0f;       // fractional index under the centre
     int carousel_target_ = 0;         // index the carousel is settling on
     float carousel_velocity_ = 0.0f;  // covers per second, while dragging

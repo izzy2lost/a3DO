@@ -14,6 +14,7 @@
 
 #include "retro3do.h"
 #include "app/types.h"
+#include "app/cover_download.h"
 #include "ui/game_library.h"
 
 struct SDL_Window;
@@ -112,6 +113,7 @@ private:
     // to the carousel.
     void import_covers(const std::string& games_folder);
     void refresh_covers();
+    void start_cover_download();
     void load_nvram();
     void save_nvram();
     bool open_bios(const std::string& path, const std::string& name);
@@ -137,6 +139,8 @@ private:
     std::unique_ptr<Ui> ui_;
     std::unique_ptr<Settings> settings_;
     std::unique_ptr<TouchPad> touch_;
+    std::unique_ptr<CoverDownloader> cover_download_;
+    int covers_shown_ = 0;   // fetched covers already passed to the UI
 
     SDL_AudioStream* audio_stream_ = nullptr;
     bool audio_started_ = false;

@@ -11,8 +11,17 @@ TEST(cover_keys_ignore_punctuation_regions_and_variants) {
     CHECK(!variant);
     CHECK(CoverIndex::key("Road-Rash.jpg") == "roadrash");
     CHECK(CoverIndex::key("3do_wayofthewarrior.jpg") == "wayofthewarrior");
-    CHECK(CoverIndex::key("3do_nighttrap_au.jpg", &variant) == "nighttrap");
+    CoverRegion region = CoverRegion::us;
+    CHECK(CoverIndex::key("3do_nighttrap_au.jpg", &variant, &region) == "nighttrap");
+    CHECK(!variant);
+    CHECK(region == CoverRegion::eu);
+    CHECK(CoverIndex::key("dragonslair_jp.jpg", &variant, &region) == "dragonslair");
+    CHECK(region == CoverRegion::jp);
+    CHECK(CoverIndex::key("3do_dragonslair_au_2.jpg", &variant, &region) == "dragonslair");
     CHECK(variant);
+    CHECK(region == CoverRegion::eu);
+    CHECK(CoverIndex::key("gex.jpg", &variant, &region) == "gex");
+    CHECK(region == CoverRegion::us);
     CHECK(CoverIndex::key("Braindead-13--2-.jpg", &variant) == "braindead13");
     CHECK(variant);
     CHECK(CoverIndex::key("Braindead-13.jpg", &variant) == "braindead13");
@@ -36,4 +45,24 @@ TEST(cover_index_prefers_plain_names_and_finds_titles_inside_longer_ones) {
           "/covers/Super-Streetfighter-II-Turbo.jpg");
     CHECK(index.find("3D Atlas (USA)").empty());
     CHECK_EQ(index.size(), size_t{5});
+}
+
+TEST(cover_index_picks_the_games_own_region) {
+    CoverIndex index;
+    index.rebuild("/c", {"nighttrap.jpg", "nighttrap_eu.jpg", "nighttrap_jp.jpg",
+                         "totaleclipse_jp.jpg", "doom_eu.jpg", "thehorde.jpg",
+                         "lastbountyhunterthe.jpg"});
+    CHECK(index.find("Night Trap (USA)") == "/c/nighttrap.jpg");
+    CHECK(index.find("Night Trap (Europe)") == "/c/nighttrap_eu.jpg");
+    CHECK(index.find("Night Trap (Japan)") == "/c/nighttrap_jp.jpg");
+    CHECK(index.find("Night Trap") == "/c/nighttrap.jpg");
+    CHECK(index.find("Night Trap (USA, Europe)") == "/c/nighttrap.jpg");
+    // Only one region on file: use it whatever the game's region.
+    CHECK(index.find("Total Eclipse (USA)") == "/c/totaleclipse_jp.jpg");
+    CHECK(index.find("Doom (USA)") == "/c/doom_eu.jpg");
+    // "The" glued to either end of the gallery's name.
+    CHECK(index.find("Horde, The (USA)") == "/c/thehorde.jpg");
+    CHECK(index.find("The Last Bounty Hunter (USA)") == "/c/lastbountyhunterthe.jpg");
+    CHECK(CoverIndex::title_region("Doctor Hauzer (Japan)") == CoverRegion::jp);
+    CHECK(CoverIndex::title_region("FIFA Soccer (Germany)") == CoverRegion::eu);
 }

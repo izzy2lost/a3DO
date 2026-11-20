@@ -378,6 +378,50 @@ public class A3DOActivity extends SDLActivity {
         return instance.retroMediaArtwork(mediaType);
     }
 
+    /**
+     * Download one https:// URL into a file, blocking. Called from the native
+     * cover downloader's worker thread (platform/http_fetch.cpp). Returns ""
+     * on success or a short reason; a failed download leaves no file behind.
+     */
+    public static String nativeFetchUrl(String address, String path) {
+        final int maximum = 64 * 1024 * 1024;
+        File target = new File(path);
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(address);
+            if (!"https".equals(url.getProtocol())) return "not an https:// address";
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(60000);
+            connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty("User-Agent", "a3DO cover downloader");
+            int status = connection.getResponseCode();
+            if (status == 404) return "not found on the server";
+            if (status != 200) return "HTTP " + status;
+            long total = 0;
+            try (InputStream input = connection.getInputStream();
+                 OutputStream output = new FileOutputStream(target)) {
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = input.read(buffer)) > 0) {
+                    total += count;
+                    if (total > maximum) throw new Exception("file too large");
+                    output.write(buffer, 0, count);
+                }
+            }
+            return "";
+        } catch (java.net.UnknownHostException e) {
+            target.delete();
+            return "no connection";
+        } catch (Exception e) {
+            target.delete();
+            String message = e.getMessage();
+            return message == null || message.isEmpty() ? e.getClass().getSimpleName() : message;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
     public static String nativeRetroMediaSavedEmail() {
         if (instance == null) return "";
         return instance.retroMediaPreferences().getString("email", "");

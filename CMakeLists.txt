@@ -176,7 +176,9 @@ set(RETRO3DO_APP_SOURCES
     src/main.cpp
     src/app/path.cpp
     src/app/settings.cpp
+    src/app/cover_download.cpp
     src/platform/app.cpp
+    src/platform/http_fetch.cpp
     src/ui/ui.cpp
     src/ui/game_library.cpp
     src/ui/cover_art.cpp
@@ -331,6 +333,7 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         tests/test_main.cpp
         tests/test_game_library.cpp
         tests/test_cover_art.cpp
+        tests/test_cover_download.cpp
         tests/test_pad_layout.cpp
         tests/test_path.cpp
         tests/test_settings.cpp
@@ -340,7 +343,8 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         src/app/path.cpp
         src/app/settings.cpp
         src/ui/game_library.cpp
-        src/ui/cover_art.cpp)
+        src/ui/cover_art.cpp
+        src/app/cover_download.cpp)
     target_link_libraries(retro3do_tests PRIVATE retro3do_core ${RETRO3DO_SDL_TARGET})
     target_include_directories(retro3do_tests PRIVATE third_party/stb)
     find_package(Threads REQUIRED)

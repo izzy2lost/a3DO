@@ -36,9 +36,11 @@ bool is_image_name(const std::string& name) {
 
 }  // namespace
 
-std::string CoverIndex::key(const std::string& name, bool* variant) {
+std::string CoverIndex::key(const std::string& name, bool* variant,
+                            CoverRegion* region) {
     std::string text = lowercase(name);
     if (variant != nullptr) *variant = false;
+    if (region != nullptr) *region = CoverRegion::us;
 
     // Extension.
     const size_t dot = text.rfind('.');
@@ -61,20 +63,40 @@ std::string CoverIndex::key(const std::string& name, bool* variant) {
 
     if (text.rfind("3do_", 0) == 0) text.erase(0, 4);
 
-    // Variant suffixes: "_au", "_2", "--2-".
-    const auto drop = [&](size_t n) {
-        text.erase(text.size() - n);
-        if (variant != nullptr) *variant = true;
-    };
+    // Variant and region suffixes, in either order: "_2", "--2-", "_au_2".
+    const auto drop = [&](size_t n) { text.erase(text.size() - n); };
     for (;;) {
         const size_t end = text.size();
         const auto digit = [&](size_t i) {
             return std::isdigit(static_cast<unsigned char>(text[i])) != 0;
         };
-        if (ends_with(text, "_au")) { drop(3); continue; }
+        static const struct { const char* suffix; CoverRegion region; } kRegions[] = {
+            {"_us", CoverRegion::us}, {"_usa", CoverRegion::us},
+            {"_eu", CoverRegion::eu}, {"_au", CoverRegion::eu},
+            {"_uk", CoverRegion::eu}, {"_pal", CoverRegion::eu},
+            {"_jp", CoverRegion::jp}, {"_jpn", CoverRegion::jp},
+        };
+        bool matched = false;
+        for (const auto& r : kRegions) {
+            if (ends_with(text, r.suffix)) {
+                drop(std::char_traits<char>::length(r.suffix));
+                if (region != nullptr) *region = r.region;
+                matched = true;
+                break;
+            }
+        }
+        if (matched) continue;
         if (end >= 4 && text.compare(end - 4, 2, "--") == 0 && digit(end - 2) &&
-            text[end - 1] == '-') { drop(4); continue; }
-        if (end >= 2 && text[end - 2] == '_' && digit(end - 1)) { drop(2); continue; }
+            text[end - 1] == '-') {
+            drop(4);
+            if (variant != nullptr) *variant = true;
+            continue;
+        }
+        if (end >= 2 && text[end - 2] == '_' && digit(end - 1)) {
+            drop(2);
+            if (variant != nullptr) *variant = true;
+            continue;
+        }
         break;
     }
 
@@ -101,6 +123,28 @@ std::string CoverIndex::key(const std::string& name, bool* variant) {
     return out;
 }
 
+CoverRegion CoverIndex::title_region(const std::string& game_name) {
+    // Only the bracketed tags: "(USA, Europe)", "(Japan)", "[PAL]".
+    std::string tags;
+    int depth = 0;
+    for (char c : lowercase(game_name)) {
+        if (c == '(' || c == '[') { ++depth; tags += ' '; continue; }
+        if ((c == ')' || c == ']') && depth > 0) { --depth; continue; }
+        if (depth > 0) tags += c;
+    }
+    if (tags.find("usa") != std::string::npos || tags.find("ntsc-u") != std::string::npos) {
+        return CoverRegion::us;
+    }
+    if (tags.find("japan") != std::string::npos || tags.find("ntsc-j") != std::string::npos) {
+        return CoverRegion::jp;
+    }
+    for (const char* europe : {"europe", "pal", "uk", "germany", "france", "spain",
+                               "italy", "australia", "netherlands", "sweden"}) {
+        if (tags.find(europe) != std::string::npos) return CoverRegion::eu;
+    }
+    return CoverRegion::us;
+}
+
 void CoverIndex::rebuild(const std::string& directory,
                          const std::vector<std::string>& files) {
     by_key_.clear();
@@ -108,40 +152,61 @@ void CoverIndex::rebuild(const std::string& directory,
     // wins, so the result does not depend on directory order.
     std::vector<std::string> sorted = files;
     std::sort(sorted.begin(), sorted.end());
-    std::unordered_map<std::string, bool> is_variant;
+    std::string prefix = directory;
+    if (!prefix.empty() && prefix.back() != '/') prefix += '/';
     for (const std::string& file : sorted) {
         if (!is_image_name(file)) continue;
         bool variant = false;
-        const std::string k = key(file, &variant);
+        CoverRegion region = CoverRegion::us;
+        const std::string k = key(file, &variant, &region);
         if (k.size() < 3) continue;
-        const auto found = is_variant.find(k);
-        if (found != is_variant.end() && (variant || !found->second)) continue;
-        is_variant[k] = variant;
-        std::string path = directory;
-        if (!path.empty() && path.back() != '/') path += '/';
-        by_key_[k] = path + file;
+        Entry& entry = by_key_[k];
+        const int r = static_cast<int>(region);
+        if (!entry.path[r].empty() && (variant || !entry.variant[r])) continue;
+        entry.path[r] = prefix + file;
+        entry.variant[r] = variant;
     }
+}
+
+const CoverIndex::Entry* CoverIndex::lookup(const std::string& k) const {
+    const auto found = by_key_.find(k);
+    return found == by_key_.end() ? nullptr : &found->second;
 }
 
 std::string CoverIndex::find(const std::string& game_name) const {
     const std::string k = key(game_name);
     if (k.empty()) return {};
-    const auto exact = by_key_.find(k);
-    if (exact != by_key_.end()) return exact->second;
 
-    // "Road & Track Presents - The Need for Speed" holds "needforspeed".
-    // Prefer the longest cover name the title contains, so "Doom II" does not
-    // settle for "Doom" when both exist.
-    std::string best_path;
-    size_t best = 0;
-    for (const auto& [cover, path] : by_key_) {
-        if (cover.size() < 5 || cover.size() <= best) continue;
-        if (k.find(cover) != std::string::npos) {
-            best = cover.size();
-            best_path = path;
+    // Galleries file "The Horde" as both "thehorde" and "hordethe".
+    const Entry* entry = lookup(k);
+    if (entry == nullptr) entry = lookup("the" + k);
+    if (entry == nullptr) entry = lookup(k + "the");
+
+    if (entry == nullptr) {
+        // "Road & Track Presents - The Need for Speed" holds "needforspeed".
+        // Prefer the longest cover name the title contains, so "Doom II" does
+        // not settle for "Doom" when both exist.
+        size_t best = 0;
+        for (const auto& [cover, candidate] : by_key_) {
+            if (cover.size() < 5 || cover.size() <= best) continue;
+            if (k.find(cover) != std::string::npos) {
+                best = cover.size();
+                entry = &candidate;
+            }
         }
     }
-    return best_path;
+    if (entry == nullptr) return {};
+
+    static constexpr CoverRegion kOrder[3][3] = {
+        {CoverRegion::us, CoverRegion::eu, CoverRegion::jp},
+        {CoverRegion::eu, CoverRegion::us, CoverRegion::jp},
+        {CoverRegion::jp, CoverRegion::us, CoverRegion::eu},
+    };
+    for (CoverRegion r : kOrder[static_cast<int>(title_region(game_name))]) {
+        const std::string& path = entry->path[static_cast<int>(r)];
+        if (!path.empty()) return path;
+    }
+    return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -222,14 +287,36 @@ CoverImage CoverDecoder::decode(const std::string& path, const u8* bytes,
             *score = edge[static_cast<size_t>(best)] / rows;
             return best + 1;
         };
+        // The right-most of the near-strongest edges: where a template has
+        // a few parallel rules, the panel starts after the last.
+        const auto rightmost = [&](double from, double to, float* score) {
+            const int a = static_cast<int>(from * w), b = std::min(w, static_cast<int>(to * w));
+            float top = 0.0f;
+            for (int x = a; x < b; ++x) top = std::max(top, edge[static_cast<size_t>(x)]);
+            int best = a;
+            for (int x = a; x < b; ++x) {
+                if (edge[static_cast<size_t>(x)] >= top * 0.9f) best = x;
+            }
+            *score = edge[static_cast<size_t>(best)] / rows;
+            return best + 1;
+        };
         const double aspect = static_cast<double>(w) / h;
         if (aspect > 1.3 && aspect < 1.7) {
             float back_score = 0.0f, narrow_score = 0.0f, wide_score = 0.0f;
             back_end = strongest(0.44, 0.50, &back_score);
-            const int narrow = strongest(0.515, 0.545, &narrow_score);
+            const int narrow = rightmost(0.515, 0.555, &narrow_score);
             const int wide = strongest(0.58, 0.66, &wide_score);
             front_start = wide_score > std::max(narrow_score, 0.3f) ? wide : narrow;
-            if (back_score < 0.2f) back_end = std::min(back_end, w - front_start);
+            if (front_start == narrow && narrow_score > 0.8f &&
+                narrow >= static_cast<int>(0.543 * w)) {
+                // The US "Interactive Multiplayer" template: a wide black
+                // strip carrying the title and barcode, from about 0.37 of
+                // the width to a white rule at 0.55. All of it is spine.
+                float strip_score = 0.0f;
+                back_end = strongest(0.35, 0.40, &strip_score);
+            } else if (back_score < 0.2f) {
+                back_end = std::min(back_end, w - front_start);
+            }
         }
     }
     const int front_w = wrap ? w - front_start : w;

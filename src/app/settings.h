@@ -73,6 +73,8 @@ constexpr const char* kGpuDriverDirectory = "video.gpu_driver.directory";
 constexpr const char* kGpuDriverLibrary = "video.gpu_driver.library";
 constexpr const char* kLibraryCount = "library.count";
 constexpr const char* kLibraryCoverView = "library.cover_view";
+// Where "Download covers" fetches the pack from: a folder holding covers.txt.
+constexpr const char* kCoverPackUrl = "library.cover_pack_url";
 constexpr const char* kSetupComplete = "setup.complete";
 constexpr const char* kGamesFolderPath = "setup.games_folder.path";
 constexpr const char* kGamesFolderName = "setup.games_folder.name";

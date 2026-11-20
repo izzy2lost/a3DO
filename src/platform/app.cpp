@@ -15,6 +15,7 @@
 #include "retro3do.h"
 #include "app/builtin_bios.h"
 #include "app/settings.h"
+#include "platform/http_fetch.h"
 #include "platform/android_storage.h"
 #include "platform/platform.h"
 #include "platform/storage.h"
@@ -1060,6 +1061,18 @@ void App::import_covers(const std::string& games_folder) {
     if (copied > 0) SDL_Log("Imported %zu cover image%s", copied, copied == 1 ? "" : "s");
 }
 
+// The pack built by tools/covers/make_cover_pack.py. A different one can be
+// set as library.cover_pack_url in the settings file.
+constexpr const char* kDefaultCoverPackUrl =
+    "https://raw.githubusercontent.com/izzy2lost/a3DO-covers/main/covers/";
+
+void App::start_cover_download() {
+    if (!cover_download_) cover_download_ = std::make_unique<CoverDownloader>();
+    http_fetch_prepare();
+    const std::string url = settings_->get(settings_key::kCoverPackUrl, kDefaultCoverPackUrl);
+    cover_download_->start(url, covers_directory(), http_fetch);
+}
+
 void App::refresh_covers() {
     namespace fs = std::filesystem;
     std::error_code error;
@@ -1431,6 +1444,18 @@ void App::tick() {
         save_settings();
     }
 
+    if (cover_download_) {
+        const CoverDownloader::Status status = cover_download_->status();
+        ui_->set_cover_download_status(status.running, status.done, status.total,
+                                       status.message);
+        // Show covers as they arrive rather than all at the end.
+        if (cover_download_->take_finished() ||
+            (status.running && status.fetched - covers_shown_ >= 10)) {
+            covers_shown_ = status.running ? status.fetched : 0;
+            refresh_covers();
+        }
+    }
+
     const RetroMediaResult retro_media =
         AndroidStorage::consume_retro_media_result();
     if (retro_media.ready) {
@@ -1490,6 +1515,8 @@ void App::tick() {
         settings_->set_bool(settings_key::kSetupComplete, true);
         save_settings();
     }
+    if (intent.download_covers) start_cover_download();
+    if (intent.cancel_cover_download && cover_download_) cover_download_->cancel();
     if (intent.rescan_games) {
         scan_games_folder(settings_->get(settings_key::kGamesFolderName),
                           settings_->get(settings_key::kGamesFolderPath));

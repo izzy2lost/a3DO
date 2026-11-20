@@ -334,6 +334,14 @@ void Ui::set_game_library(const std::vector<LibraryGame>& games) {
     library_.replace(games);
 }
 
+void Ui::set_cover_download_status(bool running, int done, int total,
+                                   const std::string& message) {
+    cover_download_running_ = running;
+    cover_download_done_ = done;
+    cover_download_total_ = total;
+    cover_download_message_ = message;
+}
+
 void Ui::set_cover_files(const std::string& directory,
                          const std::vector<std::string>& files) {
     cover_index_.rebuild(directory, files);
@@ -1392,7 +1400,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     const float font = ImGui::GetFontSize();
     const float info_height = font * 2.6f + ImGui::GetFrameHeight() +
                               ImGui::GetStyle().ItemSpacing.y * 3.0f +
-                              (cover_index_.empty() ? font * 2.4f : 0.0f);
+                              (cover_index_.empty() ? font * 2.6f + ImGui::GetFrameHeight() : 0.0f);
     const float flow_height = std::max(120.0f * scale_, avail.y - info_height);
 
     // The box size comes from the space; the reflection takes a quarter more.
@@ -1731,10 +1739,40 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     ImGui::EndDisabled();
 
     if (cover_index_.empty()) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x);
-        ImGui::TextColored(kMuted,
-                           "Add box art: put full cover scans in a folder named "
-                           "\"covers\" inside your games folder, then Rescan Games.");
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - button_w) * 0.5f);
+        draw_cover_download(intent, button_w);
+    }
+}
+
+// The download button with its progress, or the outcome of the last run.
+void Ui::draw_cover_download(UiIntent& intent, float width) {
+    const float x = ImGui::GetCursorPosX();
+    if (cover_download_running_) {
+        const float fraction = cover_download_total_ > 0
+            ? static_cast<float>(cover_download_done_) / cover_download_total_ : 0.0f;
+        char label[64];
+        std::snprintf(label, sizeof(label), "%d / %d", cover_download_done_,
+                      cover_download_total_);
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        const float stop_w = std::min(width * 0.32f, 120.0f * scale_);
+        ImGui::ProgressBar(fraction, ImVec2(width - stop_w - gap, ImGui::GetFrameHeight()),
+                           cover_download_total_ > 0 ? label : "...");
+        ImGui::SameLine();
+        if (ImGui::Button("STOP", ImVec2(stop_w, 0.0f))) intent.cancel_cover_download = true;
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, tinted(kBlue, 0.30f));
+        if (ImGui::Button(cover_index_.empty() ? "DOWNLOAD COVERS" : "UPDATE COVERS",
+                          ImVec2(width, 0.0f))) {
+            intent.download_covers = true;
+            cover_download_running_ = true;   // until the first status arrives
+            cover_download_done_ = cover_download_total_ = 0;
+        }
+        ImGui::PopStyleColor();
+    }
+    if (!cover_download_message_.empty()) {
+        ImGui::SetCursorPosX(x);
+        ImGui::PushTextWrapPos(x + width);
+        ImGui::TextColored(kMuted, "%s", cover_download_message_.c_str());
         ImGui::PopTextWrapPos();
     }
 }
@@ -1803,6 +1841,13 @@ void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
     if (ImGui::Checkbox("Show in-game performance HUD", &performance_visible_)) {
         intent.ui_settings_changed = true;
     }
+    end_panel();
+
+    begin_panel("##cover_settings", available_width, true);
+    ImGui::TextColored(kBlue, "BOX ART");
+    ImGui::TextColored(kMuted, "%zu game%s with covers. Downloads only what is new.",
+                       cover_index_.size(), cover_index_.size() == 1 ? "" : "s");
+    draw_cover_download(intent, std::min(ImGui::GetContentRegionAvail().x, 420.0f * scale_));
     end_panel();
     ImGui::PopStyleVar();
 }
