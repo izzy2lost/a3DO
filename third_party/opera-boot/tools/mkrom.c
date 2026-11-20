@@ -5,12 +5,13 @@
  *   0x00000  launch.bin
  *   0x01000  romtags.bin
  *   0x02000  minidipir.bin
+ *   0x10000  logo.bin (optional banner image, see tools/gen_logo.py)
  *   0x1F000  fake kernel header (256 zero bytes, current OS v0.0)
  *   pad with zeros to 131072 bytes.
  *
  * Prints size/crc32/md5/sha1 for release metadata.
  *
- * Usage: mkrom out.bin launch.bin romtags.bin minidipir.bin
+ * Usage: mkrom out.bin launch.bin romtags.bin minidipir.bin [logo.bin]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@
 #define SLOT_LAUNCH  0x00000
 #define SLOT_ROMTAGS 0x01000
 #define SLOT_DIPR    0x02000
+#define SLOT_LOGO    0x10000
 #define SLOT_FAKEHDR 0x1F000
 
 static uint32_t crc_table[256];
@@ -197,9 +199,9 @@ int main(int argc, char **argv)
 	FILE *o;
 	int i;
 
-	if (argc != 5) {
+	if (argc != 5 && argc != 6) {
 		fprintf(stderr,
-			"usage: %s out.bin launch.bin romtags.bin minidipir.bin\n",
+			"usage: %s out.bin launch.bin romtags.bin minidipir.bin [logo.bin]\n",
 			argv[0]);
 		return 1;
 	}
@@ -207,7 +209,9 @@ int main(int argc, char **argv)
 	if (!img) { perror("calloc"); return 1; }
 	place(img, argv[2], SLOT_LAUNCH,  SLOT_ROMTAGS);
 	place(img, argv[3], SLOT_ROMTAGS, SLOT_DIPR);
-	place(img, argv[4], SLOT_DIPR,    SLOT_FAKEHDR);
+	place(img, argv[4], SLOT_DIPR,    SLOT_LOGO);
+	if (argc == 6)
+		place(img, argv[5], SLOT_LOGO, SLOT_FAKEHDR);
 	/* SLOT_FAKEHDR..+256 stays zero: fake current OS v0.0 header. */
 
 	o = fopen(argv[1], "wb");

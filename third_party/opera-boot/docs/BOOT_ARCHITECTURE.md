@@ -21,6 +21,7 @@ reading persistent boot state. The zero-filled ROM image has these slots:
 | `0x00000` | `0x03000000` | Reset and warm-reset launcher |
 | `0x01000` | `0x03001000` | ROM RomTag table |
 | `0x02000` | `0x03002000` | Resident boot code, linked for DRAM `0x200` |
+| `0x10000` | `0x03010000` | Banner logo image (`assets/logo.bin`, from `tools/gen_logo.py`) |
 | `0x1F000` | `0x0301F000` | 256-byte zero-version placeholder kernel header |
 
 The ROM table advertises subsystem `0x10`, a `ROM_DIPIR` record of type

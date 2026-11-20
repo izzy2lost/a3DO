@@ -85,10 +85,12 @@ $(BUILD)/mkrom: tools/mkrom.c | $(BUILD)
 
 # Single self-contained 128 KiB ROM.  Every referenced byte, including
 # the zero-version fake OS header at 0x1F000, is present in the file.
+# assets/logo.bin is the banner image at 0x10000 (tools/gen_logo.py makes it
+# from assets/a3do-logo.png; it is committed so no Python is needed here).
 $(BUILD)/opera-boot.bin: $(BUILD)/mkrom $(BUILD)/launch.bin \
-    $(BUILD)/romtags.bin $(BUILD)/minidipir.bin
+    $(BUILD)/romtags.bin $(BUILD)/minidipir.bin assets/logo.bin
 	$(BUILD)/mkrom $@ $(BUILD)/launch.bin $(BUILD)/romtags.bin \
-	  $(BUILD)/minidipir.bin > $(BUILD)/hashes.txt
+	  $(BUILD)/minidipir.bin assets/logo.bin > $(BUILD)/hashes.txt
 	@cat $(BUILD)/hashes.txt
 
 FORCE:

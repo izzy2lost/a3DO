@@ -27,6 +27,7 @@ The image is a zero-filled 128 KiB ROM:
 | `0x00000` | Launch/reset code and startup banner |
 | `0x01000` | ROM RomTag table, subsystem `0x10` |
 | `0x02000` | Resident dipir blob, copied to DRAM `0x200` |
+| `0x10000` | Banner logo image drawn by the no-disc screen (`assets/logo.bin`) |
 | `0x1F000` | 256 zero bytes used as the initial current-OS header |
 
 The ROM's permanent mapping is `0x03000000`, but the CPU resets at address

@@ -1,10 +1,12 @@
 /*
  * opera-boot (GPL-2.0-only): clean-room minimal 3DO bootstrapper.
  *
- * banner.c: the no-disc banner.  An original a3DO design: the word
- * "a3DO" in bold 7x9 glyphs (white, red, gold, blue) over a matching
- * red/gold/blue rule, plus the build caption.  All artwork here is
- * original to this file; no third-party logo data is used.
+ * banner.c: the no-disc banner: the a3DO logo above the build caption.
+ * The logo is a palettised image that mkrom places at ROM offset 0x10000
+ * (tools/gen_logo.py, assets/a3do-logo.png).  If that slot does not hold
+ * a valid image, an original "a3DO" wordmark in bold 7x9 glyphs (white,
+ * red, gold, blue) over a red/gold/blue rule is drawn instead.  No
+ * third-party logo data is used.
  * Modified for a3DO (2026-11-19): replaced the upstream third-party
  * 3DO logo emblem and wordmark.
  * Linked only into the launch image and painted once at cold boot;
@@ -43,6 +45,22 @@
 #define COLOR_GOLD     0x7EE3   /* #FCBD1A */
 #define COLOR_BLUE     0x21FF   /* #4578FA */
 
+/* The logo image in ROM: "A3LG", u16 width, u16 height, 256 RGB555
+ * palette entries, then one index per pixel; all big-endian.  Index 0 is
+ * the background and is not drawn.  The ROM is mapped at 0x03000000, the
+ * same base launch.bin is linked at. */
+#ifdef BANNER_HOST
+/* test/banner_host.c: draw into host memory instead of VRAM and ROM. */
+extern u16      *host_fb;
+extern const u8 *host_logo;
+#define BANNER_LOGO_ROM host_logo
+#else
+#define BANNER_LOGO_ROM ((const u8 *)0x03010000)
+#endif
+#define LOGO_PALETTE   8
+#define LOGO_PIXELS    (LOGO_PALETTE + 256 * 2)
+#define LOGO_MAX_H     (CAPTION_Y - 16)
+
 #define CAPTION_X      ((SCREEN_WIDTH - CAPTION_WIDTH) / 2)
 #define CAPTION_Y      194
 #define CAPTION_COLOR  0x7FFF
@@ -67,6 +85,7 @@ static const u16 rule_colors[3] =
     COLOR_RED, COLOR_GOLD, COLOR_BLUE
   };
 
+#ifndef BANNER_HOST
 static u32 banner_dram_size(void)
 {
 	u32 msys = MADAM_MSYS;
@@ -75,9 +94,15 @@ static u32 banner_dram_size(void)
 	return ((b0 >> 2) + (b1 >> 2)) << 20;
 }
 
+#endif
+
 static u16 *banner_fb(void)
 {
+#ifdef BANNER_HOST
+	return host_fb;
+#else
 	return (u16 *)(banner_dram_size() + VRAM_BYTES - 256 * 1024);
+#endif
 }
 
 static void fill16(u16 *p, u16 v, u32 words)
@@ -123,7 +148,53 @@ _draw_caption_row(u16      *fb_,
 }
 
 
-// Startup banner: black with the centred a3DO wordmark, painted once.
+/* Draw the ROM logo, centred above the caption.  Returns 0 (drawing
+ * nothing) if the slot does not hold a usable image. */
+static
+int
+_draw_rom_logo(u16 *fb_)
+{
+  const u8 *logo = BANNER_LOGO_ROM;
+  const u8 *pal;
+  const u8 *px;
+  u32 w;
+  u32 h;
+  u32 x0;
+  u32 y0;
+  u32 x;
+  u32 y;
+  u32 i;
+
+  if((logo[0] != 'A') || (logo[1] != '3') ||
+     (logo[2] != 'L') || (logo[3] != 'G'))
+    return 0;
+
+  w = ((u32)logo[4] << 8) | logo[5];
+  h = ((u32)logo[6] << 8) | logo[7];
+  if((w == 0) || (h == 0) || (w > SCREEN_WIDTH) || (h > LOGO_MAX_H))
+    return 0;
+
+  pal = logo + LOGO_PALETTE;
+  px  = logo + LOGO_PIXELS;
+  x0  = (SCREEN_WIDTH - w) / 2;
+  y0  = (CAPTION_Y - 8 - h) / 2;
+
+  for(y = 0; y < h; y++)
+    {
+      for(x = 0; x < w; x++)
+        {
+          i = *px++;
+          if(i != 0)
+            span16(fb_, (x0 + x), (y0 + y), 1,
+                   (u16)(((u32)pal[i * 2] << 8) | pal[(i * 2) + 1]));
+        }
+    }
+
+  return 1;
+}
+
+
+// Startup banner: black with the centred a3DO logo, painted once.
 void
 BannerLogo(void)
 {
@@ -135,6 +206,13 @@ BannerLogo(void)
   u32 third;
 
   fill16(fb, 0, (((u32)SCREEN_BPL * SCREEN_HEIGHT) / 2));
+
+  if(_draw_rom_logo(fb))
+    {
+      for(r = 0; r < CAPTION_HEIGHT; r++)
+        _draw_caption_row(fb, caption_rows[r], (CAPTION_Y + (u32)r));
+      return;
+    }
 
   /* Wordmark: each set glyph cell becomes a MARK_SCALE square. */
   for(g = 0; g < GLYPH_COUNT; g++)
