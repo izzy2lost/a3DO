@@ -1,6 +1,7 @@
 package com.izzy2lost.a3do;
 
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -102,11 +103,22 @@ public class A3DOActivity extends SDLActivity {
         };
     }
 
+    /**
+     * SDL locks a fixed-size window to whichever orientation its first size
+     * suggests, which pinned a3DO to landscape. The UI lays itself out for
+     * both, so always rotate with the phone, honouring the rotation lock.
+     */
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         instance = this;
         documents = new DocumentAccess(this);
         super.onCreate(savedInstanceState);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
         requestFastestDisplayMode();
     }
 
