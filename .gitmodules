@@ -7,5 +7,5 @@
 	branch = release-3.4.x
 [submodule "core"]
 	path = core
-	url = https://github.com/CrownParkComputing/retro3do-core.git
-	branch = cpc
+	url = https://github.com/izzy2lost/a3DO-core.git
+	branch = main
