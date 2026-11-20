@@ -1,5 +1,6 @@
 /* touch_pad.cpp -- see touch_pad.h. */
 
+#include <cfloat>
 #include "retro_touch_pad.h"
 
 #include <algorithm>
@@ -478,15 +479,49 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
         hits_.push_back(Hit{ kind, id, c, 0.0f, half });
     };
 
+    /* Slide a group of hits back inside the area if any of it hangs off an
+     * edge. Positions are fractions of the area but sizes are in points, so
+     * a layout made on a wide screen would otherwise clip on a narrow one
+     * (portrait, where the area is the space under the picture). */
+    auto keep_inside = [&](size_t first) {
+        if (first >= hits_.size()) return;
+        const float m = 6.0f;
+        float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX;
+        for (size_t i = first; i < hits_.size(); ++i) {
+            const Hit &h = hits_[i];
+            const float hx = h.radius > 0 ? h.radius : h.half.x;
+            const float hy = h.radius > 0 ? h.radius : h.half.y;
+            x0 = std::min(x0, h.centre.x - hx); x1 = std::max(x1, h.centre.x + hx);
+            y0 = std::min(y0, h.centre.y - hy); y1 = std::max(y1, h.centre.y + hy);
+        }
+        auto shift = [&](float lo, float hi, float a, float b) {
+            if (hi - lo > (b - a) - 2 * m) return ((a + b) - (lo + hi)) * 0.5f;
+            if (lo < a + m) return a + m - lo;
+            if (hi > b - m) return b - m - hi;
+            return 0.0f;
+        };
+        const float dx = shift(x0, x1, pos.x, pos.x + size.x);
+        const float dy = shift(y0, y1, pos.y, pos.y + size.y);
+        for (size_t i = first; i < hits_.size(); ++i) {
+            hits_[i].centre.x += dx; hits_[i].centre.y += dy;
+        }
+    };
+
+    /* Narrow areas (a phone held upright) get a smaller pad, so the D-pad and
+     * the face buttons still have a gap between them. */
+    const float fit = clampf(size.x / 480.0f, 0.7f, 1.0f);
+
     for (const Cluster &c : prof_->clusters) {
         auto it = lay_.clusters.find(c.id);
         if (it == lay_.clusters.end()) continue;
+        const size_t first_hit = hits_.size();
         const Placed &p = it->second;
         if (!p.visible && !editing_) continue;
         const ImVec2 cc = centre_of(p.dx, p.dy);
-        const float sc = p.scale;
+        const float sc = p.scale * fit;
         if (c.is_stick) {
             add_circle("stick", c.id, cc, c.stick_size * sc * 0.5f);
+            keep_inside(first_hit);
             continue;
         }
         /* Per-cluster spacing multiplies the gap between buttons INSIDE
@@ -565,11 +600,13 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
             break;
         }
         }
+        keep_inside(first_hit);
     }
     for (const Extra &e : lay_.extras) {
         const float s = 52.0f * e.scale;
         const float w = std::max(s, text_width(e.label.c_str(), s * 0.3f) + s * 0.6f);
         add_box("extra", e.id, centre_of(e.dx, e.dy), ImVec2(w * 0.5f, s * 0.5f));
+        keep_inside(hits_.size() - 1);
     }
 }
 

@@ -523,6 +523,17 @@ void App::present() {
     SDL_FRect destination;
     destination.x = (static_cast<float>(window_w) - draw_w) * 0.5f;
     destination.y = (static_cast<float>(window_h) - draw_h) * 0.5f;
+    if (window_h > window_w) {
+        // Portrait: the picture sits at the top, below any cutout, and the
+        // touch controls take the space underneath (see Ui::touch_area).
+        float top = 0.0f;
+        SDL_Rect safe{};
+        if (SDL_GetWindowSafeArea(window_, &safe)) {
+            const float density = std::max(1.0f, SDL_GetWindowPixelDensity(window_));
+            top = static_cast<float>(safe.y) * density;
+        }
+        destination.y = top + bezel_margin;
+    }
     destination.w = draw_w;
     destination.h = draw_h;
 

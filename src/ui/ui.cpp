@@ -337,7 +337,7 @@ void Ui::set_retro_media_status(const std::string& email, int credits,
     retro_media_credits_ = credits;
     retro_media_free_remaining_ = free_remaining;
     retro_media_admin_ = is_admin;
-    if (!is_admin && page_ == Page::Downloads) page_ = Page::Artwork;
+    if (!is_admin && page_ == Page::Downloads) page_ = Page::Library;
     retro_media_busy_ = busy;
     retro_media_message_ = message;
     if (!email.empty()) {
@@ -621,6 +621,23 @@ void Ui::apply_safe_area() {
 }
 
 
+void Ui::touch_area(ImVec2* pos, ImVec2* size) const {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    *pos = viewport->WorkPos;
+    *size = viewport->WorkSize;
+    if (viewport->Size.y <= viewport->Size.x) return;
+    // Mirror App::present's portrait placement, in window points.
+    const float margin =
+        bezel_ ? std::min(viewport->Size.x, viewport->Size.y) * 0.035f : 0.0f;
+    const float aspect = widescreen_ ? 16.0f / 9.0f : 4.0f / 3.0f;
+    const float picture_bottom = viewport->WorkPos.y + margin * 2.0f +
+                                 (viewport->Size.x - margin * 2.0f) / aspect;
+    const float bottom = viewport->WorkPos.y + viewport->WorkSize.y;
+    if (bottom - picture_bottom < viewport->WorkSize.y * 0.25f) return;
+    pos->y = picture_bottom;
+    size->y = bottom - picture_bottom;
+}
+
 UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
                    double emulated_fps, double frame_ms, u64 underruns,
                    TouchPad& touch) {
@@ -667,8 +684,9 @@ UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
                      underruns, touch_visible, touch_editing, intent);
         touch_active = emulating && !quick_menu_ && !intent.toggle_pause;
         if (touch_active) {
-            const auto* viewport = ImGui::GetMainViewport();
-            touch.draw(viewport->WorkPos, viewport->WorkSize);
+            ImVec2 area_pos, area_size;
+            touch_area(&area_pos, &area_size);
+            touch.draw(area_pos, area_size);
         }
         if (quick_menu_) {
             draw_quick_menu(emu, emulating, touch_visible, touch_editing,
@@ -688,7 +706,9 @@ void Ui::draw_pad_editor(TouchPad& touch, UiIntent& intent) {
                         ImVec2(viewport->Pos.x + viewport->Size.x,
                                viewport->Pos.y + viewport->Size.y),
                         IM_COL32(11, 11, 14, 245));
-    touch.draw(viewport->WorkPos, viewport->WorkSize);
+    ImVec2 area_pos, area_size;
+    touch_area(&area_pos, &area_size);
+    touch.draw(area_pos, area_size);
 
     ImGui::SetNextWindowPos(
         ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -859,51 +879,61 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    // The wordmark sits at the left of the navigation bar, vertically centred
-    // on its first row, and the buttons fill the rest of the width.
+    // Wide screens: the wordmark sits at the left of one row of buttons.
+    // Narrow (portrait) screens: the wordmark shares the first row with the
+    // RESUME and EXIT actions, and the page tabs get a full-width row of
+    // their own beneath it.
     const ImVec2 bar_top = ImGui::GetCursorScreenPos();
-    const float mark_size = 30.0f * scale_;
-    const float mark_width = wordmark_width(mark_size) + 18.0f * scale_;
-    draw_wordmark(ImGui::GetWindowDrawList(),
-                  ImVec2(bar_top.x, bar_top.y + (40.0f * scale_ - mark_size) * 0.5f),
-                  mark_size);
-    const ImVec2 nav_top(bar_top.x + mark_width, bar_top.y);
-    ImGui::SetCursorScreenPos(nav_top);
-    const float full_width = ImGui::GetContentRegionAvail().x + mark_width;
-    const float total_width = full_width - mark_width;
+    const float full_width = ImGui::GetContentRegionAvail().x;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float row_gap = ImGui::GetStyle().ItemSpacing.y;
+    const float button_h = 34.0f * scale_;
+    const float mark_size = 28.0f * scale_;
+    const float mark_width = wordmark_width(mark_size) + 14.0f * scale_;
+    const int page_count = 4 + (retro_media_admin_ ? 1 : 0);
     // Apple's guidance is that an iOS app is never quit by the app itself, and
     // a visible quit control is a known review rejection. The system gesture is
-    // the way out of a handheld; on a desktop the button still is. It has to
-    // come out of the count as well as the layout or the grid keeps its slot.
-    const int action_count = 5 + (RETRO3DO_PLATFORM_IOS ? 0 : 1) +
-                             (retro_media_admin_ ? 1 : 0) +
+    // the way out of a handheld; on a desktop the button still is.
+    const int action_count = (RETRO3DO_PLATFORM_IOS ? 0 : 1) +
                              (session_available_ ? 1 : 0);
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const int nav_columns = std::max(1, std::min(action_count,
-        static_cast<int>((total_width + gap) / (84.0f * scale_ + gap))));
-    const int nav_rows = (action_count + nav_columns - 1) / nav_columns;
-    const float action_width = (total_width - gap * (nav_columns - 1)) / nav_columns;
-    const float nav_height = nav_rows * (40.0f * scale_ + ImGui::GetStyle().ItemSpacing.y);
-    int nav_index = 0;
-    auto next_nav = [&] {
-        const int slot = nav_index++;
-        if (slot % nav_columns != 0) {
-            ImGui::SameLine();
-        } else {
-            ImGui::SetCursorScreenPos(ImVec2(
-                nav_top.x, nav_top.y + (slot / nav_columns) *
-                    (40.0f * scale_ + ImGui::GetStyle().ItemSpacing.y)));
-        }
-    };
+    const float wide_button = 92.0f * scale_;
+    const bool narrow = full_width < mark_width +
+        (page_count + action_count) * (wide_button + gap);
+    const float action_width = 78.0f * scale_;
 
+    draw_wordmark(ImGui::GetWindowDrawList(),
+                  ImVec2(bar_top.x, bar_top.y + (button_h - mark_size) * 0.5f),
+                  mark_size);
+
+    float tab_x = bar_top.x + mark_width;
+    float tab_y = bar_top.y;
+    float tab_width = 0.0f;
+    float actions_x = 0.0f;
+    float bar_height = button_h;
+    if (narrow) {
+        // Actions right-aligned on the wordmark row; tabs across the next.
+        actions_x = bar_top.x + full_width -
+                    action_count * action_width - (action_count - 1) * gap;
+        tab_x = bar_top.x;
+        tab_y = bar_top.y + button_h + row_gap;
+        tab_width = (full_width - gap * (page_count - 1)) / page_count;
+        bar_height = button_h * 2.0f + row_gap;
+    } else {
+        const float row = full_width - mark_width;
+        tab_width = (row - gap * (page_count + action_count - 1)) /
+                    (page_count + action_count);
+        actions_x = tab_x + page_count * (tab_width + gap);
+    }
+
+    float cursor_x = tab_x;
     auto nav_button = [&](const char* label, Page page) {
-        next_nav();
+        ImGui::SetCursorScreenPos(ImVec2(cursor_x, tab_y));
+        cursor_x += tab_width + gap;
         const bool selected = page_ == page;
         // Pages cycle through the three theme colours.
         ImVec4 accent = kRed;
         if (page == Page::Settings || page == Page::System) accent = kGold;
-        if (page == Page::Artwork || page == Page::About) accent = kBlue;
+        if (page == Page::About || page == Page::Downloads) accent = kBlue;
         if (selected) {
             ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.30f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
@@ -912,30 +942,33 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         } else {
             ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
         }
-        if (ImGui::Button(label, ImVec2(action_width, 40.0f * scale_))) page_ = page;
+        if (ImGui::Button(label, ImVec2(tab_width, button_h))) page_ = page;
         if (selected) {
             // An accent underline marks the current page.
             const ImVec2 min = ImGui::GetItemRectMin();
             const ImVec2 max = ImGui::GetItemRectMax();
             ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(min.x + 10.0f * scale_, max.y - 3.0f * scale_),
-                ImVec2(max.x - 10.0f * scale_, max.y), colour(accent),
+                ImVec2(min.x + 8.0f * scale_, max.y - 3.0f * scale_),
+                ImVec2(max.x - 8.0f * scale_, max.y), colour(accent),
                 2.0f * scale_);
         }
         ImGui::PopStyleColor(selected ? 3 : 1);
     };
     nav_button("LIBRARY", Page::Library);
     nav_button("SETTINGS", Page::Settings);
-    nav_button("ARTWORK", Page::Artwork);
     if (retro_media_admin_) {
         nav_button("DOWNLOADS", Page::Downloads);
     }
     nav_button("SYSTEM", Page::System);
     nav_button("ABOUT", Page::About);
+
+    const float each_action = narrow ? action_width : tab_width;
+    float action_cursor = actions_x;
     if (session_available_) {
-        next_nav();
+        ImGui::SetCursorScreenPos(ImVec2(action_cursor, bar_top.y));
+        action_cursor += each_action + gap;
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.36f, 0.22f, 1.0f));
-        if (ImGui::Button("RESUME", ImVec2(action_width, 40.0f * scale_))) {
+        if (ImGui::Button("RESUME", ImVec2(each_action, button_h))) {
             show_launcher_ = false;
             wake_menu_button();
             if (!emulating) intent.toggle_pause = true;
@@ -943,13 +976,13 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         ImGui::PopStyleColor();
     }
 #if !RETRO3DO_PLATFORM_IOS
-    next_nav();
-    if (ImGui::Button("EXIT", ImVec2(action_width, 40.0f * scale_))) {
+    ImGui::SetCursorScreenPos(ImVec2(action_cursor, bar_top.y));
+    if (ImGui::Button("EXIT", ImVec2(each_action, button_h))) {
         intent.quit = true;
     }
 #endif
     // Full-width tricolour rule under the bar.
-    ImGui::SetCursorScreenPos(ImVec2(bar_top.x, nav_top.y + nav_height));
+    ImGui::SetCursorScreenPos(ImVec2(bar_top.x, bar_top.y + bar_height + row_gap));
     tricolour_rule(full_width, 3.0f * scale_);
     ImGui::Spacing();
     const ImGuiWindowFlags page_flags = ImGuiWindowFlags_NoScrollbar;
@@ -963,7 +996,6 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         case Page::Library:  draw_library(emu, intent); break;
         case Page::Settings: draw_settings(emu, touch_visible, touch_editing,
                                            intent); break;
-        case Page::Artwork:  draw_artwork(intent); break;
         case Page::Downloads: draw_downloads(intent); break;
         case Page::System:   draw_system(emu, intent); break;
         case Page::About:    draw_about(); break;
@@ -975,7 +1007,6 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
 }
 
 void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
-    alphabet_filter(library_group_, kRed, scale_);
 
     const float rescan_width = 165.0f * scale_;
     const bool narrow_search = ImGui::GetContentRegionAvail().x < 420.0f * scale_;
@@ -1344,105 +1375,6 @@ void Ui::draw_bios_panel(UiIntent& intent) {
     ImGui::PopStyleVar();
 }
 
-void Ui::draw_artwork(UiIntent& intent) {
-    page_heading("ARTWORK", "RetroMedia account and library card downloads");
-
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float available_width = ImGui::GetContentRegionAvail().x;
-    const bool stacked = available_width < 700.0f * scale_;
-    const float column_width = stacked ? available_width : (available_width - gap) * 0.5f;
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                        ImVec2(10.0f * scale_, 10.0f * scale_));
-
-    begin_panel("##retromedia_account", column_width, stacked);
-    ImGui::TextColored(kBlue, "RETROMEDIA ACCOUNT");
-    ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
-    ImGui::TextWrapped(
-        "Sign in with your registered account. a3DO stores only the "
-        "encrypted session; passwords are never saved.");
-    ImGui::PopStyleColor();
-
-    if (!AndroidStorage::available()) {
-        ImGui::TextColored(kAmber,
-                           "Account downloads are available in the Android build.");
-    } else if (retro_media_email_.empty()) {
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##rm_email", "Registered email",
-                                 retro_media_email_buffer_,
-                                 sizeof(retro_media_email_buffer_));
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##rm_password", "Password",
-                                 retro_media_password_buffer_,
-                                 sizeof(retro_media_password_buffer_),
-                                 ImGuiInputTextFlags_Password);
-        ImGui::BeginDisabled(retro_media_busy_);
-        if (ImGui::Button("SIGN IN", ImVec2(-1.0f, 0.0f))) {
-            retro_media_busy_ = true;
-            retro_media_message_ = "Signing in...";
-            intent.retro_media_login = true;
-            intent.retro_media_email = retro_media_email_buffer_;
-            intent.retro_media_password = retro_media_password_buffer_;
-        }
-        ImGui::EndDisabled();
-    } else {
-        ImGui::TextColored(kGreen, "%s", retro_media_email_.c_str());
-        ImGui::Text("Daily downloads left: %d    Credits: %d",
-                    retro_media_free_remaining_, retro_media_credits_);
-        ImGui::BeginDisabled(retro_media_busy_);
-        if (ImGui::Button("SIGN OUT", ImVec2(-1.0f, 0.0f))) {
-            retro_media_busy_ = true;
-            retro_media_message_ = "Signing out...";
-            intent.retro_media_logout = true;
-        }
-        ImGui::EndDisabled();
-    }
-    end_panel();
-
-    if (!stacked) ImGui::SameLine();
-    begin_panel("##retromedia_downloads", column_width, stacked);
-    ImGui::TextColored(kGold, "GAME CARD ARTWORK");
-    ImGui::TextColored(kMuted, "%zu game%s in this library",
-                       library_.games().size(),
-                       library_.games().size() == 1 ? "" : "s");
-    const char* type_ids[] = {"box2d", "images", "thumbnails", "titles"};
-    const char* type_names[] = {"2D COVER", "SCREENSHOT", "THUMBNAIL",
-                                "TITLE SCREEN"};
-    int selected_type = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (retro_media_type_ == type_ids[i]) selected_type = i;
-    }
-    ImGui::TextColored(kMuted, "Choose what appears on every library card:");
-    for (int i = 0; i < 4; ++i) {
-        if (i == 1 || i == 3) same_line_if_fits(type_names[i]);
-        if (ImGui::RadioButton(type_names[i], &selected_type, i)) {
-            retro_media_type_ = type_ids[i];
-            intent.retro_media_artwork_changed = true;
-            intent.ui_settings_changed = true;
-        }
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
-    ImGui::TextWrapped(
-        "Only missing cards are downloaded. Daily allowance and credits apply.");
-    ImGui::PopStyleColor();
-    ImGui::BeginDisabled(retro_media_busy_ || retro_media_email_.empty() ||
-                         library_.games().empty());
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.07f, 0.40f, 0.42f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                          ImVec4(0.09f, 0.55f, 0.57f, 1.0f));
-    if (ImGui::Button("DOWNLOAD MISSING ARTWORK",
-                      ImVec2(-1.0f, 46.0f * scale_))) {
-        retro_media_busy_ = true;
-        retro_media_message_ = "Matching library and downloading artwork...";
-        intent.retro_media_sync = true;
-    }
-    ImGui::PopStyleColor(2);
-    ImGui::EndDisabled();
-    ImGui::TextColored(retro_media_busy_ ? kAmber : kMuted, "%s",
-                       retro_media_message_.c_str());
-    end_panel();
-    ImGui::PopStyleVar();
-}
-
 void Ui::draw_downloads(UiIntent& intent) {
     page_heading("GAME DOWNLOADS", "Administrator RetroMedia catalogue");
     if (!retro_media_admin_) {
@@ -1739,7 +1671,7 @@ void Ui::draw_about() {
     ImGui::TextColored(kRed, "INCLUDED FEATURES");
     ImGui::TextWrapped(
         "Built-in BIOS | ISO/BIN/CUE/IMG/CHD | live multi-disc swap | gamepad "
-        "and touch controls | RetroMedia artwork | shared mobile and desktop "
+        "and touch controls | portrait and landscape | shared mobile and desktop "
         "core");
     end_panel();
     ImGui::PopStyleVar();

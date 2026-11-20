@@ -12,6 +12,7 @@
 #include "ui/game_library.h"
 
 struct ImGuiStyle;
+struct ImVec2;
 struct SDL_Window;
 struct SDL_Renderer;
 struct SDL_Texture;
@@ -112,6 +113,9 @@ public:
     int renderer_backend() const { return renderer_backend_; }
     bool widescreen() const { return widescreen_; }
     bool bezel() const { return bezel_; }
+    // Where the touch controls go: the whole screen in landscape, the space
+    // under the picture in portrait.
+    void touch_area(ImVec2* pos, ImVec2* size) const;
     bool crt_effect() const { return crt_effect_; }
     const std::string& gpu_driver_name() const { return gpu_driver_name_; }
     const std::string& retro_media_type() const { return retro_media_type_; }
@@ -129,7 +133,7 @@ public:
     void render(SDL_Renderer* renderer);
 
 private:
-    enum class Page { Library, Settings, Artwork, Downloads, System, About };
+    enum class Page { Library, Settings, Downloads, System, About };
     enum class Browsing { None, Bios, Disc };
 
     void release_ui_texture();
@@ -147,7 +151,6 @@ private:
     void draw_bios_panel(UiIntent& intent);
     void draw_render_scale(retro3do_t* emu, UiIntent& intent, bool compact);
     void draw_pad_editor(TouchPad& touch, UiIntent& intent);
-    void draw_artwork(UiIntent& intent);
     void draw_downloads(UiIntent& intent);
     void draw_system(retro3do_t* emu, UiIntent& intent);
     void draw_about();

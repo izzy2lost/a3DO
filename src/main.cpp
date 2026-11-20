@@ -19,11 +19,11 @@ int main(int argc, char* argv[]) {
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "0");
     SDL_SetHint("SDL_ANDROID_BLOCK_ON_PAUSE", "1");
 
-    // The plist says landscape, but the plist only constrains iOS. SDL keeps
-    // its own list and will still bring the window up portrait on a handheld
-    // unless it is told, and a portrait surface is what puts the machine's
-    // 4:3 picture off to one side of the screen.
-    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    // Both orientations. The window is resizable, so SDL asks Android for
+    // FULL_USER: the phone rotates freely and respects the rotation lock. In
+    // portrait the picture moves to the top and the touch pad goes below it.
+    SDL_SetHint(SDL_HINT_ORIENTATIONS,
+                "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
 
     retro3do::App app;
 
