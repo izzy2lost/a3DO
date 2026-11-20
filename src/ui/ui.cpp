@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -333,6 +334,87 @@ void Ui::set_game_library(const std::vector<LibraryGame>& games) {
     library_.replace(games);
 }
 
+void Ui::set_cover_files(const std::string& directory,
+                         const std::vector<std::string>& files) {
+    cover_index_.rebuild(directory, files);
+    cover_paths_.clear();
+    release_cover_textures();
+    if (!cover_decoder_ && !cover_index_.empty()) {
+        cover_decoder_ = std::make_unique<CoverDecoder>();
+    }
+}
+
+const Ui::CoverTexture* Ui::cover_for(const std::string& game_name) {
+    if (cover_index_.empty() || renderer_ == nullptr || !cover_decoder_) {
+        return nullptr;
+    }
+    auto memo = cover_paths_.find(game_name);
+    if (memo == cover_paths_.end()) {
+        memo = cover_paths_.emplace(game_name, cover_index_.find(game_name)).first;
+    }
+    if (memo->second.empty()) return nullptr;
+    CoverTexture& cover = cover_textures_[memo->second];
+    cover.last_used = cover_frame_;
+    if (!cover.requested) {
+        cover.requested = true;
+        cover_decoder_->request(memo->second);
+    }
+    return cover.front != nullptr ? &cover : nullptr;
+}
+
+void Ui::pump_covers() {
+    ++cover_frame_;
+    if (!cover_decoder_ || renderer_ == nullptr) return;
+    const auto upload = [this](const std::vector<u8>& pixels, int w, int h) {
+        if (pixels.empty() || w <= 0 || h <= 0) return static_cast<SDL_Texture*>(nullptr);
+        SDL_Texture* texture = SDL_CreateTexture(
+            renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (texture == nullptr) return texture;
+        SDL_UpdateTexture(texture, nullptr, pixels.data(), w * 4);
+        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        return texture;
+    };
+    for (CoverImage& image : cover_decoder_->take_finished()) {
+        const auto found = cover_textures_.find(image.path);
+        // Already evicted while it was decoding: drop it, a revisit asks again.
+        if (found == cover_textures_.end() || found->second.front != nullptr) continue;
+        CoverTexture& cover = found->second;
+        cover.failed = image.failed;
+        if (image.failed) continue;
+        cover.front = upload(image.front, image.front_width, image.front_height);
+        cover.back = upload(image.back, image.back_width, image.back_height);
+        cover.front_aspect = static_cast<float>(image.front_width) /
+                             static_cast<float>(std::max(1, image.front_height));
+        cover.back_aspect = static_cast<float>(image.back_width) /
+                            static_cast<float>(std::max(1, image.back_height));
+    }
+
+    // Keep what the carousel touched in the last couple of seconds.
+    for (auto it = cover_textures_.begin(); it != cover_textures_.end();) {
+        if (cover_frame_ - it->second.last_used > 150) {
+            if (it->second.front) SDL_DestroyTexture(it->second.front);
+            if (it->second.back) SDL_DestroyTexture(it->second.back);
+            it = cover_textures_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void Ui::release_cover_textures() {
+    for (auto& [path, cover] : cover_textures_) {
+        (void)path;
+        if (cover.front) SDL_DestroyTexture(cover.front);
+        if (cover.back) SDL_DestroyTexture(cover.back);
+    }
+    cover_textures_.clear();
+    if (cover_decoder_) {
+        cover_decoder_->cancel_pending();
+        cover_decoder_->take_finished();
+    }
+}
+
 void Ui::configure_video(int renderer_backend, bool widescreen, bool bezel,
                          bool crt_effect, const std::string& gpu_driver_name) {
     renderer_backend_ = (renderer_backend == 1 || renderer_backend == 2) ? renderer_backend : 0;
@@ -507,6 +589,8 @@ void Ui::end_session() {
 void Ui::shutdown() {
     if (!initialised_) return;
     clear_artwork_textures();
+    release_cover_textures();
+    cover_decoder_.reset();
     release_ui_texture();
     release_logo();
     if (renderer_ != nullptr) ImGui_ImplSDLRenderer3_Shutdown();
@@ -519,6 +603,7 @@ void Ui::shutdown() {
 void Ui::suspend_renderer() {
     if (!initialised_ || renderer_ == nullptr) return;
     release_artwork_textures();
+    release_cover_textures();
     release_ui_texture();
     release_logo();
     ImGui_ImplSDLRenderer3_Shutdown();
@@ -1044,18 +1129,46 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     draw_file_browser(intent);
 }
 
-void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
+void Ui::launch_game(const LibraryGame& game, UiIntent& intent) {
+    intent.disc_chosen = true;
+    intent.start_disc = true;
+    intent.disc_path = game.target;
+    intent.disc_name = game.name;
+    active_discs_ = game.discs;
+    active_disc_ = 0;
+    session_available_ = true;
+    show_launcher_ = false;
+    wake_menu_button();
+}
 
-    const float rescan_width = 165.0f * scale_;
-    const bool narrow_search = ImGui::GetContentRegionAvail().x < 420.0f * scale_;
+void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
+    pump_covers();
+
+    const float gap_x = ImGui::GetStyle().ItemSpacing.x;
+    const float rescan_width = 150.0f * scale_;
+    const float view_width = 96.0f * scale_;
+    const bool narrow_search = ImGui::GetContentRegionAvail().x < 460.0f * scale_;
     ImGui::SetNextItemWidth(narrow_search ? -1.0f :
-        ImGui::GetContentRegionAvail().x - rescan_width - ImGui::GetStyle().ItemSpacing.x);
+        ImGui::GetContentRegionAvail().x - rescan_width - view_width - gap_x * 2.0f);
     ImGui::InputTextWithHint("##search", "Search your library...", search_buffer_,
                              sizeof(search_buffer_));
+    const float row_width = ImGui::GetContentRegionAvail().x;
     if (!narrow_search) ImGui::SameLine();
+    // In the narrow layout the two buttons share the row under the search box.
+    const float narrow_view = (row_width - gap_x) * 0.4f;
+    const float narrow_rescan = row_width - gap_x - narrow_view;
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.17f, 0.22f, 1.0f));
+    if (ImGui::Button(cover_view_ ? "GRID" : "COVERS",
+                      ImVec2(narrow_search ? narrow_view : view_width, 0.0f))) {
+        cover_view_ = !cover_view_;
+        intent.ui_settings_changed = true;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
     ImGui::BeginDisabled(games_folder_target_.empty());
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.22f, 0.45f, 1.0f));
-    if (ImGui::Button("RESCAN GAMES", ImVec2(narrow_search ? -1.0f : rescan_width, 0.0f))) {
+    if (ImGui::Button("RESCAN GAMES",
+                      ImVec2(narrow_search ? narrow_rescan : rescan_width, 0.0f))) {
         intent.rescan_games = true;
     }
     ImGui::PopStyleColor();
@@ -1065,7 +1178,9 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
     // and the scrollbar itself is intentionally hidden: touch users swipe the
     // list, while desktop users can still use a wheel or trackpad.
     ImGui::BeginChild("##game_list", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                      ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar |
+                          (cover_view_ ? ImGuiWindowFlags_NoScrollWithMouse : 0));
 
     const std::vector<const LibraryGame*> games =
         library_.filtered(search_buffer_, library_group_);
@@ -1083,6 +1198,12 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                                  "games folder, then choose Rescan Games."
                                : "Try another letter or clear the search box.");
         ImGui::EndChild();
+        ImGui::EndChild();
+        return;
+    }
+
+    if (cover_view_) {
+        draw_cover_flow(emu, games, intent);
         ImGui::EndChild();
         return;
     }
@@ -1204,15 +1325,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
             if (ImGui::Button("PLAY",
                               ImVec2(card_width - padding * 2.0f, 0.0f))) {
-                intent.disc_chosen = true;
-                intent.start_disc = true;
-                intent.disc_path = game.target;
-                intent.disc_name = game.name;
-                active_discs_ = game.discs;
-                active_disc_ = 0;
-                session_available_ = true;
-                show_launcher_ = false;
-                wake_menu_button();
+                launch_game(game, intent);
             }
             ImGui::PopStyleColor(3);
             ImGui::EndDisabled();
@@ -1247,6 +1360,326 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                 : "No BIOS is loaded. Choose one in Settings.");
     }
     ImGui::EndChild();
+}
+
+// A cover carousel: the selected box faces the viewer, its neighbours stand
+// angled to either side like books on a shelf, and each has a faint
+// reflection on the floor. Swipe or drag to move, tap a neighbour to bring it
+// round, tap the middle box to turn it over and read the back.
+//
+// ImGui draws in 2D, so the boxes are projected here. A perspective quad
+// drawn as two affine triangles bends the picture along its diagonal; each
+// face is cut into narrow vertical strips instead, which keeps the bend too
+// small to see.
+void Ui::draw_cover_flow(retro3do_t* emu,
+                         const std::vector<const LibraryGame*>& games,
+                         UiIntent& intent) {
+    ImGuiIO& io = ImGui::GetIO();
+    const float dt = std::clamp(io.DeltaTime, 1.0f / 240.0f, 0.1f);
+    const int count = static_cast<int>(games.size());
+    carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
+    carousel_pos_ = std::clamp(carousel_pos_, -0.5f, static_cast<float>(count) - 0.5f);
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float font = ImGui::GetFontSize();
+    const float info_height = font * 2.6f + ImGui::GetFrameHeight() +
+                              ImGui::GetStyle().ItemSpacing.y * 3.0f +
+                              (cover_index_.empty() ? font * 2.4f : 0.0f);
+    const float flow_height = std::max(120.0f * scale_, avail.y - info_height);
+
+    // The box size comes from the space; the reflection takes a quarter more.
+    const float cover_h = std::min(flow_height / 1.28f, avail.x * 0.62f / 0.705f);
+    const float unit = cover_h * 0.705f;        // a front-cover width
+    // The box and its reflection (0.3 of its height) sit in the middle.
+    const ImVec2 centre(origin.x + avail.x * 0.5f,
+                        origin.y + std::max(0.0f, (flow_height - cover_h * 1.3f) * 0.5f) +
+                            cover_h * 0.5f);
+    const float camera = cover_h * 4.0f;
+
+    // ---- input ---------------------------------------------------------
+    ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_height));
+    const bool hovered = ImGui::IsItemHovered();
+    const float spacing = unit * 0.44f;          // screen px per index, side covers
+    if (ImGui::IsItemActivated()) {
+        carousel_drag_x_ = io.MousePos.x;
+        carousel_drag_pos_ = carousel_pos_;
+        carousel_moved_ = false;
+        carousel_velocity_ = 0.0f;
+    }
+    bool tapped = false;
+    if (ImGui::IsItemActive()) {
+        const float dx = io.MousePos.x - carousel_drag_x_;
+        if (std::abs(dx) > 8.0f * scale_) carousel_moved_ = true;
+        if (carousel_moved_) {
+            const float previous = carousel_pos_;
+            carousel_pos_ = std::clamp(carousel_drag_pos_ - dx / spacing, -0.4f,
+                                       static_cast<float>(count) - 0.6f);
+            const float v = (carousel_pos_ - previous) / dt;
+            carousel_velocity_ = carousel_velocity_ * 0.6f + v * 0.4f;
+        }
+    }
+    if (ImGui::IsItemDeactivated()) {
+        if (carousel_moved_) {
+            // A fling carries on a little way before settling.
+            carousel_target_ = static_cast<int>(std::lround(
+                carousel_pos_ + std::clamp(carousel_velocity_ * 0.18f, -8.0f, 8.0f)));
+        } else {
+            tapped = true;
+        }
+    }
+    if (hovered && !ImGui::IsItemActive()) {
+        const float wheel = io.MouseWheelH != 0.0f ? -io.MouseWheelH : -io.MouseWheel;
+        if (wheel > 0.0f) ++carousel_target_;
+        if (wheel < 0.0f) --carousel_target_;
+    }
+    if (!io.WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) --carousel_target_;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) ++carousel_target_;
+    }
+    carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
+    if (!ImGui::IsItemActive() || !carousel_moved_) {
+        carousel_pos_ += (static_cast<float>(carousel_target_) - carousel_pos_) *
+                         (1.0f - std::exp(-dt * 11.0f));
+        if (std::abs(carousel_pos_ - carousel_target_) < 0.001f) {
+            carousel_pos_ = static_cast<float>(carousel_target_);
+        }
+    }
+    const int selected = std::clamp(static_cast<int>(std::lround(carousel_pos_)), 0, count - 1);
+
+    // A turned box turns back when another is chosen; only then may the new
+    // one be turned.
+    if (flip_index_ != selected) {
+        flipped_ = false;
+        if (flip_angle_ < 0.02f) flip_index_ = selected;
+    }
+
+    // ---- geometry ------------------------------------------------------
+    struct Placed {
+        int index;
+        float x, z, angle, depth;   // depth: distance from the middle, for order
+    };
+    std::vector<Placed> placed;
+    const int first = std::max(0, static_cast<int>(std::floor(carousel_pos_)) - 7);
+    const int last = std::min(count - 1, static_cast<int>(std::ceil(carousel_pos_)) + 7);
+    constexpr float kSideAngle = 0.96f;   // about 55 degrees
+    for (int i = first; i <= last; ++i) {
+        const float d = static_cast<float>(i) - carousel_pos_;
+        const float ad = std::abs(d);
+        const float sd = d < 0.0f ? -1.0f : 1.0f;
+        const float near = std::min(ad, 1.0f);
+        Placed p;
+        p.index = i;
+        p.x = sd * (near * unit * 0.92f + std::max(ad - 1.0f, 0.0f) * spacing);
+        p.z = -near * unit * 0.6f;
+        p.angle = sd * near * kSideAngle;
+        if (i == flip_index_) p.angle += flip_angle_;
+        p.depth = ad;
+        placed.push_back(p);
+    }
+    std::sort(placed.begin(), placed.end(),
+              [](const Placed& a, const Placed& b) { return a.depth > b.depth; });
+
+    const auto project = [&](const Placed& p, float w, float lx, float ly) {
+        (void)w;
+        const float x = p.x + lx * std::cos(p.angle);
+        const float z = p.z - lx * std::sin(p.angle);
+        const float k = camera / (camera - z);
+        return ImVec2(centre.x + x * k, centre.y + ly * k);
+    };
+
+    // Tap: the frontmost box under the finger.
+    if (tapped) {
+        for (auto it = placed.rbegin(); it != placed.rend(); ++it) {
+            const float w = unit;
+            const ImVec2 a = project(*it, w, -w * 0.5f, -cover_h * 0.5f);
+            const ImVec2 b = project(*it, w, w * 0.5f, -cover_h * 0.5f);
+            const ImVec2 c = project(*it, w, w * 0.5f, cover_h * 0.5f);
+            const ImVec2 e = project(*it, w, -w * 0.5f, cover_h * 0.5f);
+            const float x0 = std::min({a.x, b.x, c.x, e.x});
+            const float x1 = std::max({a.x, b.x, c.x, e.x});
+            const float y0 = std::min({a.y, b.y, c.y, e.y});
+            const float y1 = std::max({a.y, b.y, c.y, e.y});
+            if (io.MousePos.x < x0 || io.MousePos.x > x1 || io.MousePos.y < y0 ||
+                io.MousePos.y > y1) {
+                continue;
+            }
+            if (it->index == selected) {
+                if (flip_index_ == selected) flipped_ = !flipped_;
+            } else {
+                carousel_target_ = it->index;
+            }
+            break;
+        }
+    }
+
+    // Turn toward the wanted side with a little ease at both ends.
+    {
+        const float goal = flipped_ ? 3.14159265f : 0.0f;
+        const float step = dt * 7.5f * (0.25f + std::sin(std::clamp(flip_angle_, 0.0f, 3.1416f)));
+        if (flip_angle_ < goal) flip_angle_ = std::min(goal, flip_angle_ + step);
+        if (flip_angle_ > goal) flip_angle_ = std::max(goal, flip_angle_ - step);
+    }
+
+    // ---- drawing -------------------------------------------------------
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + flow_height), true);
+    const ImVec2 white_uv = ImGui::GetFontTexUvWhitePixel();
+
+    // One face as vertical strips, plus its reflection beneath. `back` mirrors
+    // the u axis so the reverse reads correctly once the box has turned.
+    const auto face = [&](const Placed& p, float w, SDL_Texture* texture,
+                          bool back, ImU32 tint, ImVec4 flat) {
+        constexpr int kStrips = 14;
+        const bool textured = texture != nullptr;
+        if (textured) {
+            draw->PushTexture(ImTextureRef(
+                static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture))));
+        }
+        const float top = -cover_h * 0.5f, bottom = cover_h * 0.5f;
+        const float reflection = cover_h * 0.3f;
+        const ImU32 solid = textured ? tint : colour(flat);
+        const ImU32 shine_top = (solid & 0x00ffffffu) | (static_cast<ImU32>(70) << 24);
+        const ImU32 shine_bottom = solid & 0x00ffffffu;
+        draw->PrimReserve(kStrips * 12, kStrips * 8);
+        for (int s = 0; s < kStrips; ++s) {
+            const float t0 = static_cast<float>(s) / kStrips;
+            const float t1 = static_cast<float>(s + 1) / kStrips;
+            const float lx0 = (t0 - 0.5f) * w, lx1 = (t1 - 0.5f) * w;
+            const float u0 = back ? 1.0f - t0 : t0, u1 = back ? 1.0f - t1 : t1;
+            const ImVec2 p00 = project(p, w, lx0, top), p10 = project(p, w, lx1, top);
+            const ImVec2 p01 = project(p, w, lx0, bottom), p11 = project(p, w, lx1, bottom);
+            const ImVec2 r0 = project(p, w, lx0, bottom + reflection);
+            const ImVec2 r1 = project(p, w, lx1, bottom + reflection);
+            const auto uv = [&](float u, float v) {
+                return textured ? ImVec2(u, v) : white_uv;
+            };
+            const ImDrawIdx base = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
+            draw->PrimWriteVtx(p00, uv(u0, 0.0f), solid);
+            draw->PrimWriteVtx(p10, uv(u1, 0.0f), solid);
+            draw->PrimWriteVtx(p11, uv(u1, 1.0f), solid);
+            draw->PrimWriteVtx(p01, uv(u0, 1.0f), solid);
+            // The floor shows the bottom of the box upside down, fading out.
+            draw->PrimWriteVtx(p01, uv(u0, 1.0f), shine_top);
+            draw->PrimWriteVtx(p11, uv(u1, 1.0f), shine_top);
+            draw->PrimWriteVtx(r1, uv(u1, 0.7f), shine_bottom);
+            draw->PrimWriteVtx(r0, uv(u0, 0.7f), shine_bottom);
+            for (int q = 0; q < 2; ++q) {
+                const ImDrawIdx b = static_cast<ImDrawIdx>(base + q * 4);
+                draw->PrimWriteIdx(b); draw->PrimWriteIdx(b + 1); draw->PrimWriteIdx(b + 2);
+                draw->PrimWriteIdx(b); draw->PrimWriteIdx(b + 2); draw->PrimWriteIdx(b + 3);
+            }
+        }
+        if (textured) draw->PopTexture();
+    };
+
+    for (const Placed& p : placed) {
+        const LibraryGame& game = *games[static_cast<size_t>(p.index)];
+        const CoverTexture* cover = cover_for(game.name);
+        const bool showing_back = std::cos(p.angle) < 0.0f;
+        // The back is drawn at its own width: the swap happens edge-on, so
+        // the change is never seen.
+        const float w = !cover ? unit
+                        : cover_h * (showing_back && cover->back ? cover->back_aspect
+                                                                 : cover->front_aspect);
+        // Boxes dim as they turn away from the light.
+        const float light = 0.45f + 0.55f * std::abs(std::cos(p.angle)) *
+                                        (1.0f - 0.35f * std::min(p.depth, 1.0f));
+        const int l = static_cast<int>(std::clamp(light, 0.0f, 1.0f) * 255.0f);
+        const ImU32 tint = IM_COL32(l, l, l, 255);
+        const ImVec4 accent = card_accent(game.name);
+
+        if (cover && (!showing_back || cover->back)) {
+            face(p, w, showing_back ? cover->back : cover->front, showing_back, tint, accent);
+        } else {
+            // No art (or no back): a plain box in the game's colour.
+            const ImVec4 flat = showing_back ? tinted(accent, 0.12f)
+                                             : tinted(accent, 0.28f);
+            face(p, w, nullptr, showing_back, tint,
+                 ImVec4(flat.x * light, flat.y * light, flat.z * light, 1.0f));
+            if (p.depth < 0.5f && std::abs(std::cos(p.angle)) > 0.6f) {
+                const ImVec2 tl = project(p, w, -w * 0.5f, -cover_h * 0.5f);
+                const ImVec2 br = project(p, w, w * 0.5f, cover_h * 0.5f);
+                const float box_w = std::abs(br.x - tl.x);
+                const char initial[2] = {card_initial(game.name), '\0'};
+                const float big = std::min(cover_h * 0.3f, font * 4.0f);
+                const ImVec2 isz = ImGui::GetFont()->CalcTextSizeA(big, FLT_MAX, 0.0f, initial);
+                const float mid_x = (tl.x + br.x) * 0.5f;
+                if (!showing_back) {
+                    draw->AddText(ImGui::GetFont(), big,
+                                  ImVec2(mid_x - isz.x * 0.5f,
+                                         tl.y + (br.y - tl.y) * 0.32f - isz.y * 0.5f),
+                                  colour(accent), initial);
+                }
+                draw_card_title(draw, game.name,
+                                ImVec2(std::min(tl.x, br.x) + box_w * 0.08f,
+                                       tl.y + (br.y - tl.y) * 0.6f),
+                                box_w * 0.84f, IM_COL32(232, 240, 247, 255), font);
+            }
+        }
+    }
+    draw->PopClipRect();
+
+    // Prefetch the next few either way so a swipe lands on finished art.
+    for (int i = std::max(0, selected - 9); i <= std::min(count - 1, selected + 9); ++i) {
+        cover_for(games[static_cast<size_t>(i)]->name);
+    }
+
+    // ---- the chosen game ----------------------------------------------
+    const LibraryGame& game = *games[static_cast<size_t>(selected)];
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + flow_height));
+    const ImVec2 title_size = ImGui::CalcTextSize(game.name.c_str(), nullptr, false, avail.x);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - title_size.x) * 0.5f));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x);
+    ImGui::TextUnformatted(game.name.c_str());
+    ImGui::PopTextWrapPos();
+    char detail[64];
+    std::snprintf(detail, sizeof(detail), "%d of %d%s", selected + 1, count,
+                  game.discs.size() > 1
+                      ? ("  -  " + std::to_string(game.discs.size()) + " discs").c_str()
+                      : "");
+    const float detail_w = ImGui::CalcTextSize(detail).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - detail_w) * 0.5f));
+    ImGui::TextColored(kMuted, "%s", detail);
+
+    const float button_w = std::min(avail.x, 360.0f * scale_);
+    const float flip_w = button_w * 0.38f;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - button_w) * 0.5f);
+    const CoverTexture* chosen = cover_for(game.name);
+    ImGui::BeginDisabled(flip_index_ != selected);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.17f, 0.22f, 1.0f));
+    if (ImGui::Button(flipped_ ? "FRONT" : "BACK", ImVec2(flip_w, 0.0f)) ||
+        (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
+        if (flip_index_ == selected) flipped_ = !flipped_;
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    (void)chosen;
+    ImGui::SameLine();
+    const ImVec4 accent = card_accent(game.name);
+    ImGui::BeginDisabled(!retro3do_bios_loaded(emu) || retro3do_demo_loaded(emu));
+    ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.35f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, tinted(accent, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+    if (ImGui::Button("PLAY", ImVec2(button_w - flip_w - gap, 0.0f)) ||
+        (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+        launch_game(game, intent);
+    }
+    ImGui::PopStyleColor(3);
+    ImGui::EndDisabled();
+
+    if (cover_index_.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x);
+        ImGui::TextColored(kMuted,
+                           "Add box art: put full cover scans in a folder named "
+                           "\"covers\" inside your games folder, then Rescan Games.");
+        ImGui::PopTextWrapPos();
+    }
 }
 
 void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
@@ -1701,7 +2134,7 @@ void Ui::draw_about() {
     ImGui::TextWrapped(
         "Application and emulation core: MIT License, Copyright (c) 2026 Crown "
         "Park Computing. Bundled components keep their own licences: SDL3, "
-        "Dear ImGui, Roboto, AdrenoTools and opera-boot.");
+        "Dear ImGui, stb_image, Roboto, AdrenoTools and opera-boot.");
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
     ImGui::TextWrapped(
         "Licence notices do not replace third-party rights clearance; see "

@@ -179,6 +179,7 @@ set(RETRO3DO_APP_SOURCES
     src/platform/app.cpp
     src/ui/ui.cpp
     src/ui/game_library.cpp
+    src/ui/cover_art.cpp
     src/ui/file_browser.cpp
     src/ui/touch_pad.cpp
     src/ui/retro_touch_pad.cpp
@@ -207,7 +208,12 @@ endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(retro3do PRIVATE retro3do_core imgui ${RETRO3DO_SDL_TARGET} Threads::Threads)
-target_include_directories(retro3do PRIVATE src)
+target_include_directories(retro3do PRIVATE src third_party/stb)
+# JPEG decoding is the one hot loop in the UI. Debug builds (including the
+# Android debug APK) would otherwise decode a cover several times slower.
+if(NOT MSVC)
+    set_source_files_properties(src/ui/cover_art.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 
 if(APPLE)
     # An Apple build is an app bundle, not a bare executable - on iOS because
@@ -324,6 +330,7 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
     add_executable(retro3do_tests
         tests/test_main.cpp
         tests/test_game_library.cpp
+        tests/test_cover_art.cpp
         tests/test_pad_layout.cpp
         tests/test_path.cpp
         tests/test_settings.cpp
@@ -332,8 +339,10 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         src/app/pad_layout.cpp
         src/app/path.cpp
         src/app/settings.cpp
-        src/ui/game_library.cpp)
-    target_link_libraries(retro3do_tests PRIVATE retro3do_core)
+        src/ui/game_library.cpp
+        src/ui/cover_art.cpp)
+    target_link_libraries(retro3do_tests PRIVATE retro3do_core ${RETRO3DO_SDL_TARGET})
+    target_include_directories(retro3do_tests PRIVATE third_party/stb)
     find_package(Threads REQUIRED)
     target_link_libraries(retro3do_tests PRIVATE Threads::Threads)
     target_include_directories(retro3do_tests PRIVATE src tests)

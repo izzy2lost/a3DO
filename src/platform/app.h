@@ -107,6 +107,11 @@ private:
     void begin_bios_change();
     void finish_bios_change();
     void scan_games_folder(const std::string& name, const std::string& target);
+    // Box art lives in <private storage>/covers. A rescan copies in any images
+    // from a "covers" folder inside the games folder; refresh hands the list
+    // to the carousel.
+    void import_covers(const std::string& games_folder);
+    void refresh_covers();
     void load_nvram();
     void save_nvram();
     bool open_bios(const std::string& path, const std::string& name);

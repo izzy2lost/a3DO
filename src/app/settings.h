@@ -72,6 +72,7 @@ constexpr const char* kGpuDriverName = "video.gpu_driver.name";
 constexpr const char* kGpuDriverDirectory = "video.gpu_driver.directory";
 constexpr const char* kGpuDriverLibrary = "video.gpu_driver.library";
 constexpr const char* kLibraryCount = "library.count";
+constexpr const char* kLibraryCoverView = "library.cover_view";
 constexpr const char* kSetupComplete = "setup.complete";
 constexpr const char* kGamesFolderPath = "setup.games_folder.path";
 constexpr const char* kGamesFolderName = "setup.games_folder.name";

@@ -9,6 +9,7 @@
 #include "retro3do.h"
 #include "app/types.h"
 #include "ui/file_browser.h"
+#include "ui/cover_art.h"
 #include "ui/game_library.h"
 
 struct ImGuiStyle;
@@ -85,6 +86,11 @@ public:
 
     void set_remembered_disc(const std::string& name, const std::string& target);
     void set_game_library(const std::vector<LibraryGame>& games);
+    // Box art for the carousel: image files (bare names) inside `directory`.
+    void set_cover_files(const std::string& directory,
+                         const std::vector<std::string>& files);
+    bool cover_view() const { return cover_view_; }
+    void set_cover_view(bool on) { cover_view_ = on; }
     void configure_setup(bool complete, const std::string& games_folder_name,
                          const std::string& games_folder_target);
     // Which BIOS the machine is running: the user's own (custom) or the
@@ -146,6 +152,10 @@ private:
     void draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
                        bool touch_editing, UiIntent& intent);
     void draw_library(retro3do_t* emu, UiIntent& intent);
+    void draw_cover_flow(retro3do_t* emu,
+                         const std::vector<const LibraryGame*>& games,
+                         UiIntent& intent);
+    void launch_game(const LibraryGame& game, UiIntent& intent);
     void draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
                        UiIntent& intent);
     void draw_bios_panel(UiIntent& intent);
@@ -165,6 +175,21 @@ private:
     SDL_Texture* artwork_texture(const std::string& game_name);
     void release_artwork_textures();
     void clear_artwork_textures();
+
+    // One decoded cover on the GPU. Textures far from the carousel's
+    // position are released and decoded again if the user comes back.
+    struct CoverTexture {
+        SDL_Texture* front = nullptr;
+        SDL_Texture* back = nullptr;
+        float front_aspect = 0.705f;
+        float back_aspect = 0.705f;
+        bool requested = false;
+        bool failed = false;
+        u64 last_used = 0;
+    };
+    const CoverTexture* cover_for(const std::string& game_name);
+    void pump_covers();
+    void release_cover_textures();
 
     struct ArtworkTexture {
         std::string path;
@@ -219,6 +244,21 @@ private:
     int ui_texture_width_ = 0;
     int ui_texture_height_ = 0;
     std::unordered_map<std::string, ArtworkTexture> artwork_;
+    CoverIndex cover_index_;
+    std::unique_ptr<CoverDecoder> cover_decoder_;
+    std::unordered_map<std::string, std::string> cover_paths_;   // title -> file
+    std::unordered_map<std::string, CoverTexture> cover_textures_;  // file -> GPU
+    u64 cover_frame_ = 0;
+    bool cover_view_ = true;
+    float carousel_pos_ = 0.0f;       // fractional index under the centre
+    int carousel_target_ = 0;         // index the carousel is settling on
+    float carousel_velocity_ = 0.0f;  // covers per second, while dragging
+    float carousel_drag_x_ = 0.0f;
+    float carousel_drag_pos_ = 0.0f;
+    bool carousel_moved_ = false;
+    int flip_index_ = -1;             // the cover that is turned or turning
+    bool flipped_ = false;            // want the back of flip_index_ showing
+    float flip_angle_ = 0.0f;         // radians, 0 = front, pi = back
     std::string retro_media_type_ = "box2d";
     std::string retro_media_email_;
     std::string retro_media_message_ = "Not signed in";

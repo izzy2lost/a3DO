@@ -5,6 +5,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
+
+#if defined(__ANDROID__)
+#include <unistd.h>
+#endif
 #include <unordered_map>
 
 #include "retro3do.h"
@@ -262,6 +267,8 @@ bool App::init() {
         return false;
     }
     ui_->set_renderer_status(actual_renderer_, renderer_startup_message_);
+    ui_->set_cover_view(settings_->get_bool(settings_key::kLibraryCoverView, true));
+    refresh_covers();
 
     start_audio();
 
@@ -972,8 +979,99 @@ void App::scan_games_folder(const std::string& name, const std::string& target) 
         }
     }
     ui_->set_game_library(library_.games());
+    import_covers(target);
+    refresh_covers();
     save_settings();
     SDL_Log("Setup library scan added %zu game%s", added, added == 1 ? "" : "s");
+}
+
+namespace {
+
+bool is_cover_image(const std::string& name) {
+    const std::string lower = lowercased(name);
+    const auto ends = [&](const char* tail) {
+        const size_t n = std::strlen(tail);
+        return lower.size() > n && lower.compare(lower.size() - n, n, tail) == 0;
+    };
+    return ends(".jpg") || ends(".jpeg") || ends(".png");
+}
+
+bool is_cover_folder(const std::string& name) {
+    const std::string lower = lowercased(name);
+    return lower == "covers" || lower == "boxart" || lower == "box art" ||
+           lower == "artwork";
+}
+
+std::string covers_directory() {
+    return Storage::join(Storage::writable_directory(), "covers");
+}
+
+}  // namespace
+
+void App::import_covers(const std::string& games_folder) {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    const fs::path destination(covers_directory());
+    fs::create_directories(destination, error);
+
+    size_t copied = 0;
+#if defined(__ANDROID__)
+    if (AndroidStorage::available()) {
+        for (const DocumentEntry& folder : AndroidStorage::list(games_folder)) {
+            if (!folder.is_directory || !is_cover_folder(folder.name)) continue;
+            for (const DocumentEntry& entry : AndroidStorage::list(folder.uri)) {
+                if (entry.is_directory || !is_cover_image(entry.name)) continue;
+                if (entry.name.find('/') != std::string::npos) continue;
+                const fs::path out = destination / entry.name;
+                if (fs::exists(out, error)) continue;
+                const int fd = AndroidStorage::open_document(entry.uri);
+                if (fd < 0) continue;
+                std::vector<u8> bytes;
+                u8 buffer[65536];
+                for (;;) {
+                    const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+                    if (n <= 0) break;
+                    bytes.insert(bytes.end(), buffer, buffer + n);
+                }
+                ::close(fd);
+                if (!bytes.empty() &&
+                    SDL_SaveFile(out.string().c_str(), bytes.data(), bytes.size())) {
+                    ++copied;
+                }
+            }
+        }
+    } else
+#endif
+    if (fs::is_directory(games_folder, error)) {
+        for (const auto& folder : fs::directory_iterator(games_folder, error)) {
+            if (!folder.is_directory(error) ||
+                !is_cover_folder(folder.path().filename().string())) {
+                continue;
+            }
+            for (const auto& entry : fs::directory_iterator(folder.path(), error)) {
+                const std::string name = entry.path().filename().string();
+                if (!entry.is_regular_file(error) || !is_cover_image(name)) continue;
+                const fs::path out = destination / name;
+                if (fs::exists(out, error)) continue;
+                if (fs::copy_file(entry.path(), out, error)) ++copied;
+            }
+        }
+    }
+    if (copied > 0) SDL_Log("Imported %zu cover image%s", copied, copied == 1 ? "" : "s");
+}
+
+void App::refresh_covers() {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    const std::string directory = covers_directory();
+    std::vector<std::string> files;
+    for (const auto& entry : fs::directory_iterator(directory, error)) {
+        const std::string name = entry.path().filename().string();
+        if (entry.is_regular_file(error) && is_cover_image(name)) files.push_back(name);
+    }
+    ui_->set_cover_files(directory, files);
+    SDL_Log("Covers: %zu image%s in %s", files.size(), files.size() == 1 ? "" : "s",
+            directory.c_str());
 }
 
 void App::save_settings() {
@@ -990,6 +1088,7 @@ void App::save_settings() {
                    ui_->renderer_backend() == 1   ? "vulkan"
                    : ui_->renderer_backend() == 2 ? "opengl"
                                                   : "auto");
+    settings_->set_bool(settings_key::kLibraryCoverView, ui_->cover_view());
     settings_->set_bool(settings_key::kAspectWidescreen, ui_->widescreen());
     settings_->set_bool(settings_key::kBezel, ui_->bezel());
     settings_->set_bool(settings_key::kCrtEffect, ui_->crt_effect());
