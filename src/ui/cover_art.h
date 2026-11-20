@@ -44,13 +44,16 @@ private:
     std::unordered_map<std::string, std::string> by_key_;   // key -> path
 };
 
-// One decoded cover, already split. Back is empty for a front-only image.
+// One decoded cover, already split. Back and spine are empty for a
+// front-only image.
 struct CoverImage {
     std::string path;
     int front_width = 0, front_height = 0;
     std::vector<u8> front;   // RGBA
     int back_width = 0, back_height = 0;
     std::vector<u8> back;    // RGBA
+    int spine_width = 0, spine_height = 0;
+    std::vector<u8> spine;   // RGBA, empty when the image has no spine
     bool failed = false;
 };
 

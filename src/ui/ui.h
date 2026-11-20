@@ -181,8 +181,10 @@ private:
     struct CoverTexture {
         SDL_Texture* front = nullptr;
         SDL_Texture* back = nullptr;
+        SDL_Texture* spine = nullptr;
         float front_aspect = 0.705f;
         float back_aspect = 0.705f;
+        float spine_aspect = 0.0f;    // width / height; 0 without a spine
         bool requested = false;
         bool failed = false;
         u64 last_used = 0;

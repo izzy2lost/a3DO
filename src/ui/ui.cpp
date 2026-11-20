@@ -388,6 +388,11 @@ void Ui::pump_covers() {
                              static_cast<float>(std::max(1, image.front_height));
         cover.back_aspect = static_cast<float>(image.back_width) /
                             static_cast<float>(std::max(1, image.back_height));
+        cover.spine = upload(image.spine, image.spine_width, image.spine_height);
+        if (cover.spine) {
+            cover.spine_aspect = static_cast<float>(image.spine_width) /
+                                 static_cast<float>(std::max(1, image.spine_height));
+        }
     }
 
     // Keep what the carousel touched in the last couple of seconds.
@@ -395,6 +400,7 @@ void Ui::pump_covers() {
         if (cover_frame_ - it->second.last_used > 150) {
             if (it->second.front) SDL_DestroyTexture(it->second.front);
             if (it->second.back) SDL_DestroyTexture(it->second.back);
+            if (it->second.spine) SDL_DestroyTexture(it->second.spine);
             it = cover_textures_.erase(it);
         } else {
             ++it;
@@ -407,6 +413,7 @@ void Ui::release_cover_textures() {
         (void)path;
         if (cover.front) SDL_DestroyTexture(cover.front);
         if (cover.back) SDL_DestroyTexture(cover.back);
+        if (cover.spine) SDL_DestroyTexture(cover.spine);
     }
     cover_textures_.clear();
     if (cover_decoder_) {
@@ -1400,7 +1407,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     // ---- input ---------------------------------------------------------
     ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_height));
     const bool hovered = ImGui::IsItemHovered();
-    const float spacing = unit * 0.44f;          // screen px per index, side covers
+    const float spacing = unit * 0.54f;          // screen px per index, side covers
     if (ImGui::IsItemActivated()) {
         carousel_drag_x_ = io.MousePos.x;
         carousel_drag_pos_ = carousel_pos_;
@@ -1462,11 +1469,17 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     struct Placed {
         int index;
         float x, z, angle, depth;   // depth: distance from the middle, for order
+        float w, d;                 // box width and depth
+        const CoverTexture* cover;
     };
     std::vector<Placed> placed;
     const int first = std::max(0, static_cast<int>(std::floor(carousel_pos_)) - 7);
     const int last = std::min(count - 1, static_cast<int>(std::ceil(carousel_pos_)) + 7);
     constexpr float kSideAngle = 0.96f;   // about 55 degrees
+    // The chosen box rests turned a little so its spine shows; a box seen
+    // dead on would look like a flat picture. Turned over, it leans the other
+    // way, so the spine stays in view beside the back.
+    constexpr float kRestAngle = 0.42f;
     for (int i = first; i <= last; ++i) {
         const float d = static_cast<float>(i) - carousel_pos_;
         const float ad = std::abs(d);
@@ -1476,34 +1489,43 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         p.index = i;
         p.x = sd * (near * unit * 0.92f + std::max(ad - 1.0f, 0.0f) * spacing);
         p.z = -near * unit * 0.6f;
-        p.angle = sd * near * kSideAngle;
-        if (i == flip_index_) p.angle += flip_angle_;
+        const float flip = i == flip_index_ ? flip_angle_ : 0.0f;
+        p.angle = sd * near * kSideAngle + (1.0f - near) * kRestAngle * std::cos(flip) + flip;
         p.depth = ad;
+        p.cover = cover_for(games[static_cast<size_t>(i)]->name);
+        p.w = p.cover ? cover_h * p.cover->front_aspect : unit;
+        // As deep as the printed spine is wide, within reason.
+        p.d = cover_h * (p.cover && p.cover->spine_aspect > 0.0f
+                             ? std::clamp(p.cover->spine_aspect, 0.06f, 0.2f)
+                             : 0.09f);
         placed.push_back(p);
     }
     std::sort(placed.begin(), placed.end(),
               [](const Placed& a, const Placed& b) { return a.depth > b.depth; });
 
-    const auto project = [&](const Placed& p, float w, float lx, float ly) {
-        (void)w;
-        const float x = p.x + lx * std::cos(p.angle);
-        const float z = p.z - lx * std::sin(p.angle);
-        const float k = camera / (camera - z);
-        return ImVec2(centre.x + x * k, centre.y + ly * k);
+    // Box space: x across the front, y down, z out of the front. The box
+    // turns about its vertical axis by p.angle.
+    const auto to_world = [](const Placed& p, float lx, float lz) {
+        const float c = std::cos(p.angle), s = std::sin(p.angle);
+        return ImVec2(p.x + lx * c + lz * s, p.z - lx * s + lz * c);
+    };
+    const auto project = [&](const Placed& p, float lx, float ly, float lz) {
+        const ImVec2 w = to_world(p, lx, lz);
+        const float k = camera / (camera - w.y);
+        return ImVec2(centre.x + w.x * k, centre.y + ly * k);
     };
 
     // Tap: the frontmost box under the finger.
     if (tapped) {
         for (auto it = placed.rbegin(); it != placed.rend(); ++it) {
-            const float w = unit;
-            const ImVec2 a = project(*it, w, -w * 0.5f, -cover_h * 0.5f);
-            const ImVec2 b = project(*it, w, w * 0.5f, -cover_h * 0.5f);
-            const ImVec2 c = project(*it, w, w * 0.5f, cover_h * 0.5f);
-            const ImVec2 e = project(*it, w, -w * 0.5f, cover_h * 0.5f);
-            const float x0 = std::min({a.x, b.x, c.x, e.x});
-            const float x1 = std::max({a.x, b.x, c.x, e.x});
-            const float y0 = std::min({a.y, b.y, c.y, e.y});
-            const float y1 = std::max({a.y, b.y, c.y, e.y});
+            float x0 = FLT_MAX, x1 = -FLT_MAX, y0 = FLT_MAX, y1 = -FLT_MAX;
+            for (int corner = 0; corner < 8; ++corner) {
+                const ImVec2 q = project(*it, (corner & 1 ? 0.5f : -0.5f) * it->w,
+                                         (corner & 2 ? 0.5f : -0.5f) * cover_h,
+                                         (corner & 4 ? 0.5f : -0.5f) * it->d);
+                x0 = std::min(x0, q.x); x1 = std::max(x1, q.x);
+                y0 = std::min(y0, q.y); y1 = std::max(y1, q.y);
+            }
             if (io.MousePos.x < x0 || io.MousePos.x > x1 || io.MousePos.y < y0 ||
                 io.MousePos.y > y1) {
                 continue;
@@ -1530,11 +1552,37 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + flow_height), true);
     const ImVec2 white_uv = ImGui::GetFontTexUvWhitePixel();
 
-    // One face as vertical strips, plus its reflection beneath. `back` mirrors
-    // the u axis so the reverse reads correctly once the box has turned.
-    const auto face = [&](const Placed& p, float w, SDL_Texture* texture,
-                          bool back, ImU32 tint, ImVec4 flat) {
-        constexpr int kStrips = 14;
+    // One upright face of a box, from a to b (box-space x, z) along its top
+    // edge, with u running u_a to u_b. Drawn as vertical strips so the
+    // picture does not shear under perspective, plus its reflection on the
+    // floor. Faces turned away from the camera are skipped; on a box the
+    // rest never overlap, so no sorting is needed. Returns whether it drew.
+    const auto face = [&](const Placed& p, ImVec2 a, ImVec2 b, ImVec2 normal,
+                          SDL_Texture* texture, float u_a, float u_b, ImU32 base,
+                          int strips) {
+        const ImVec2 n = to_world(p, normal.x, normal.y);
+        const ImVec2 n_world(n.x - p.x, n.y - p.z);
+        const ImVec2 mid = to_world(p, (a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+        if (n_world.x * -mid.x + n_world.y * (camera - mid.y) <= 0.0f) return false;
+
+        // Lit from the camera: faces dim as they turn away, sides a little
+        // more, and boxes further out more again.
+        float light = (0.4f + 0.6f * std::max(0.0f, n_world.y)) *
+                      (1.0f - 0.3f * std::min(p.depth, 1.0f));
+        if (normal.x != 0.0f) light *= 0.85f;
+        const auto lit = [&](ImU32 c) {
+            const auto ch = [&](int shift) {
+                return static_cast<ImU32>(std::clamp(
+                    static_cast<float>((c >> shift) & 0xff) * light, 0.0f, 255.0f));
+            };
+            return ch(IM_COL32_R_SHIFT) << IM_COL32_R_SHIFT |
+                   ch(IM_COL32_G_SHIFT) << IM_COL32_G_SHIFT |
+                   ch(IM_COL32_B_SHIFT) << IM_COL32_B_SHIFT;
+        };
+        const ImU32 solid = lit(base) | IM_COL32_A_MASK;
+        const ImU32 shine_top = lit(base) | (static_cast<ImU32>(70) << IM_COL32_A_SHIFT);
+        const ImU32 shine_bottom = lit(base);
+
         const bool textured = texture != nullptr;
         if (textured) {
             draw->PushTexture(ImTextureRef(
@@ -1542,23 +1590,19 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         }
         const float top = -cover_h * 0.5f, bottom = cover_h * 0.5f;
         const float reflection = cover_h * 0.3f;
-        const ImU32 solid = textured ? tint : colour(flat);
-        const ImU32 shine_top = (solid & 0x00ffffffu) | (static_cast<ImU32>(70) << 24);
-        const ImU32 shine_bottom = solid & 0x00ffffffu;
-        draw->PrimReserve(kStrips * 12, kStrips * 8);
-        for (int s = 0; s < kStrips; ++s) {
-            const float t0 = static_cast<float>(s) / kStrips;
-            const float t1 = static_cast<float>(s + 1) / kStrips;
-            const float lx0 = (t0 - 0.5f) * w, lx1 = (t1 - 0.5f) * w;
-            const float u0 = back ? 1.0f - t0 : t0, u1 = back ? 1.0f - t1 : t1;
-            const ImVec2 p00 = project(p, w, lx0, top), p10 = project(p, w, lx1, top);
-            const ImVec2 p01 = project(p, w, lx0, bottom), p11 = project(p, w, lx1, bottom);
-            const ImVec2 r0 = project(p, w, lx0, bottom + reflection);
-            const ImVec2 r1 = project(p, w, lx1, bottom + reflection);
-            const auto uv = [&](float u, float v) {
-                return textured ? ImVec2(u, v) : white_uv;
-            };
-            const ImDrawIdx base = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
+        const auto uv = [&](float u, float v) { return textured ? ImVec2(u, v) : white_uv; };
+        draw->PrimReserve(strips * 12, strips * 8);
+        for (int s = 0; s < strips; ++s) {
+            const float t0 = static_cast<float>(s) / strips;
+            const float t1 = static_cast<float>(s + 1) / strips;
+            const float x0 = a.x + (b.x - a.x) * t0, z0 = a.y + (b.y - a.y) * t0;
+            const float x1 = a.x + (b.x - a.x) * t1, z1 = a.y + (b.y - a.y) * t1;
+            const float u0 = u_a + (u_b - u_a) * t0, u1 = u_a + (u_b - u_a) * t1;
+            const ImVec2 p00 = project(p, x0, top, z0), p10 = project(p, x1, top, z1);
+            const ImVec2 p01 = project(p, x0, bottom, z0), p11 = project(p, x1, bottom, z1);
+            const ImVec2 r0 = project(p, x0, bottom + reflection, z0);
+            const ImVec2 r1 = project(p, x1, bottom + reflection, z1);
+            const ImDrawIdx first_vtx = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
             draw->PrimWriteVtx(p00, uv(u0, 0.0f), solid);
             draw->PrimWriteVtx(p10, uv(u1, 0.0f), solid);
             draw->PrimWriteVtx(p11, uv(u1, 1.0f), solid);
@@ -1569,57 +1613,70 @@ void Ui::draw_cover_flow(retro3do_t* emu,
             draw->PrimWriteVtx(r1, uv(u1, 0.7f), shine_bottom);
             draw->PrimWriteVtx(r0, uv(u0, 0.7f), shine_bottom);
             for (int q = 0; q < 2; ++q) {
-                const ImDrawIdx b = static_cast<ImDrawIdx>(base + q * 4);
-                draw->PrimWriteIdx(b); draw->PrimWriteIdx(b + 1); draw->PrimWriteIdx(b + 2);
-                draw->PrimWriteIdx(b); draw->PrimWriteIdx(b + 2); draw->PrimWriteIdx(b + 3);
+                const ImDrawIdx i = static_cast<ImDrawIdx>(first_vtx + q * 4);
+                draw->PrimWriteIdx(i); draw->PrimWriteIdx(i + 1); draw->PrimWriteIdx(i + 2);
+                draw->PrimWriteIdx(i); draw->PrimWriteIdx(i + 2); draw->PrimWriteIdx(i + 3);
             }
         }
         if (textured) draw->PopTexture();
+        return true;
     };
 
+    constexpr ImU32 kWhite = IM_COL32(255, 255, 255, 255);
+    constexpr ImU32 kEdge = IM_COL32(150, 150, 150, 255);
     for (const Placed& p : placed) {
         const LibraryGame& game = *games[static_cast<size_t>(p.index)];
-        const CoverTexture* cover = cover_for(game.name);
-        const bool showing_back = std::cos(p.angle) < 0.0f;
-        // The back is drawn at its own width: the swap happens edge-on, so
-        // the change is never seen.
-        const float w = !cover ? unit
-                        : cover_h * (showing_back && cover->back ? cover->back_aspect
-                                                                 : cover->front_aspect);
-        // Boxes dim as they turn away from the light.
-        const float light = 0.45f + 0.55f * std::abs(std::cos(p.angle)) *
-                                        (1.0f - 0.35f * std::min(p.depth, 1.0f));
-        const int l = static_cast<int>(std::clamp(light, 0.0f, 1.0f) * 255.0f);
-        const ImU32 tint = IM_COL32(l, l, l, 255);
+        const CoverTexture* cover = p.cover;
+        const float hw = p.w * 0.5f, hd = p.d * 0.5f;
         const ImVec4 accent = card_accent(game.name);
+        SDL_Texture* front = cover ? cover->front : nullptr;
+        SDL_Texture* back = cover ? cover->back : nullptr;
 
-        if (cover && (!showing_back || cover->back)) {
-            face(p, w, showing_back ? cover->back : cover->front, showing_back, tint, accent);
+        // The wrap runs back | spine | front around the box: the spine joins
+        // the front's left edge to the back's right edge.
+        const bool front_visible =
+            face(p, ImVec2(-hw, hd), ImVec2(hw, hd), ImVec2(0.0f, 1.0f), front, 0.0f, 1.0f,
+                 front ? kWhite : colour(tinted(accent, 0.28f)), 14);
+        face(p, ImVec2(hw, -hd), ImVec2(-hw, -hd), ImVec2(0.0f, -1.0f), back, 0.0f, 1.0f,
+             back ? kWhite : colour(tinted(accent, 0.12f)), 14);
+        if (cover && cover->spine) {
+            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), cover->spine,
+                 0.0f, 1.0f, kWhite, 3);
+        } else if (front) {
+            // No printed spine: carry the front's left edge round the side.
+            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), front,
+                 0.004f, 0.012f, kWhite, 1);
         } else {
-            // No art (or no back): a plain box in the game's colour.
-            const ImVec4 flat = showing_back ? tinted(accent, 0.12f)
-                                             : tinted(accent, 0.28f);
-            face(p, w, nullptr, showing_back, tint,
-                 ImVec4(flat.x * light, flat.y * light, flat.z * light, 1.0f));
-            if (p.depth < 0.5f && std::abs(std::cos(p.angle)) > 0.6f) {
-                const ImVec2 tl = project(p, w, -w * 0.5f, -cover_h * 0.5f);
-                const ImVec2 br = project(p, w, w * 0.5f, cover_h * 0.5f);
-                const float box_w = std::abs(br.x - tl.x);
-                const char initial[2] = {card_initial(game.name), '\0'};
-                const float big = std::min(cover_h * 0.3f, font * 4.0f);
-                const ImVec2 isz = ImGui::GetFont()->CalcTextSizeA(big, FLT_MAX, 0.0f, initial);
-                const float mid_x = (tl.x + br.x) * 0.5f;
-                if (!showing_back) {
-                    draw->AddText(ImGui::GetFont(), big,
-                                  ImVec2(mid_x - isz.x * 0.5f,
-                                         tl.y + (br.y - tl.y) * 0.32f - isz.y * 0.5f),
-                                  colour(accent), initial);
-                }
-                draw_card_title(draw, game.name,
-                                ImVec2(std::min(tl.x, br.x) + box_w * 0.08f,
-                                       tl.y + (br.y - tl.y) * 0.6f),
-                                box_w * 0.84f, IM_COL32(232, 240, 247, 255), font);
-            }
+            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), nullptr,
+                 0.0f, 0.0f, colour(tinted(accent, 0.2f)), 1);
+        }
+        // The open edge has nothing printed on it; the front's right edge,
+        // carried round and darkened, reads better than bare black.
+        if (front) {
+            face(p, ImVec2(hw, hd), ImVec2(hw, -hd), ImVec2(1.0f, 0.0f), front, 0.988f,
+                 0.996f, kEdge, 1);
+        } else {
+            face(p, ImVec2(hw, hd), ImVec2(hw, -hd), ImVec2(1.0f, 0.0f), nullptr, 0.0f, 0.0f,
+                 colour(tinted(accent, 0.16f)), 1);
+        }
+
+        // No art yet: the initial and title on the front.
+        if (!front && front_visible && p.depth < 0.5f && std::abs(std::cos(p.angle)) > 0.6f) {
+            const ImVec2 tl = project(p, -hw, -cover_h * 0.5f, hd);
+            const ImVec2 br = project(p, hw, cover_h * 0.5f, hd);
+            const float box_w = std::abs(br.x - tl.x);
+            const char initial[2] = {card_initial(game.name), '\0'};
+            const float big = std::min(cover_h * 0.3f, font * 4.0f);
+            const ImVec2 isz = ImGui::GetFont()->CalcTextSizeA(big, FLT_MAX, 0.0f, initial);
+            const float mid_x = (tl.x + br.x) * 0.5f;
+            draw->AddText(ImGui::GetFont(), big,
+                          ImVec2(mid_x - isz.x * 0.5f,
+                                 tl.y + (br.y - tl.y) * 0.32f - isz.y * 0.5f),
+                          colour(accent), initial);
+            draw_card_title(draw, game.name,
+                            ImVec2(std::min(tl.x, br.x) + box_w * 0.08f,
+                                   tl.y + (br.y - tl.y) * 0.6f),
+                            box_w * 0.84f, IM_COL32(232, 240, 247, 255), font);
         }
     }
     draw->PopClipRect();

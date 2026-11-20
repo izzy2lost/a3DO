@@ -247,6 +247,16 @@ CoverImage CoverDecoder::decode(const std::string& path, const u8* bytes,
         image.back_width = scaled(back_end);
         image.back_height = out_h;
         image.back = resample(pixels, w, back_end, h, image.back_width, out_h);
+        // The spine is drawn on the side of the box, so its width also
+        // sets how deep the box is. Trim a column either side so the panel
+        // edges do not bleed onto it.
+        const int spine_from = back_end + 1, spine_w = front_start - back_end - 2;
+        if (spine_w >= 2) {
+            image.spine_width = scaled(spine_w);
+            image.spine_height = out_h;
+            image.spine = resample(pixels + static_cast<size_t>(spine_from) * 4, w,
+                                   spine_w, h, image.spine_width, out_h);
+        }
     }
     stbi_image_free(pixels);
     return image;
