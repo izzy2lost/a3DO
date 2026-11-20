@@ -94,6 +94,14 @@ App::~App() {
     SDL_Quit();
 }
 
+namespace {
+int renderer_backend_index(const std::string& name) {
+    if (name == "vulkan") return 1;
+    if (name == "opengl") return 2;
+    return 0;
+}
+}  // namespace
+
 bool App::init() {
     // SDL_INIT_AUDIO is required or SDL_OpenAudioDeviceStream fails with
     // "Audio subsystem is not initialized" - which is reported as "audio
@@ -113,7 +121,27 @@ bool App::init() {
 
     const std::string requested_renderer =
         settings_->get(settings_key::kRendererBackend, "auto");
-    std::string render_hint = requested_renderer == "vulkan" ? "vulkan" : "";
+    // AUTO means Vulkan wherever it is usable on Android, OpenGL ES otherwise.
+    // Android's GLES drivers vary far more than its Vulkan ones, and Vulkan
+    // costs less CPU per frame and paces frames more evenly. Before Android
+    // 10 Vulkan support was optional and often buggy, so those stay on GLES.
+    // SDL tries each listed driver in turn, so a device whose Vulkan cannot
+    // make a renderer quietly gets GLES instead. Desktop keeps SDL's choice.
+    std::string render_hint;
+    if (requested_renderer == "vulkan") {
+        render_hint = "vulkan";
+    } else if (requested_renderer == "opengl") {
+#if RETRO3DO_MOBILE
+        render_hint = "opengles2";
+#else
+        render_hint = "opengl";
+#endif
+    }
+#if defined(__ANDROID__)
+    else if (SDL_GetAndroidSDKVersion() >= 29) {
+        render_hint = "vulkan,opengles2";
+    }
+#endif
 
 #if defined(__ANDROID__)
     const std::string driver_directory =
@@ -172,7 +200,7 @@ bool App::init() {
                                             kDefaultWindowHeight, flags,
                                             &window_, &renderer_)) {
                 renderer_startup_message_ =
-                    "Vulkan failed; using automatic renderer (" +
+                    "Requested renderer failed; using automatic (" +
                     requested_error + ")";
             }
         }
@@ -750,8 +778,7 @@ void App::load_settings() {
     ui_->set_performance_visible(
         settings_->get_bool(settings_key::kPerformanceHud, false));
     ui_->configure_video(
-        settings_->get(settings_key::kRendererBackend, "auto") == "vulkan" ? 1
-                                                                              : 0,
+        renderer_backend_index(settings_->get(settings_key::kRendererBackend, "auto")),
         settings_->get_bool(settings_key::kAspectWidescreen, false),
         settings_->get_bool(settings_key::kBezel, false),
         settings_->get_bool(settings_key::kCrtEffect, false),
@@ -960,7 +987,9 @@ void App::save_settings() {
     settings_->set_bool(settings_key::kPerformanceHud,
                         ui_->performance_visible());
     settings_->set(settings_key::kRendererBackend,
-                   ui_->renderer_backend() == 1 ? "vulkan" : "auto");
+                   ui_->renderer_backend() == 1   ? "vulkan"
+                   : ui_->renderer_backend() == 2 ? "opengl"
+                                                  : "auto");
     settings_->set_bool(settings_key::kAspectWidescreen, ui_->widescreen());
     settings_->set_bool(settings_key::kBezel, ui_->bezel());
     settings_->set_bool(settings_key::kCrtEffect, ui_->crt_effect());

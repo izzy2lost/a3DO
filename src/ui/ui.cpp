@@ -335,7 +335,7 @@ void Ui::set_game_library(const std::vector<LibraryGame>& games) {
 
 void Ui::configure_video(int renderer_backend, bool widescreen, bool bezel,
                          bool crt_effect, const std::string& gpu_driver_name) {
-    renderer_backend_ = renderer_backend == 1 ? 1 : 0;
+    renderer_backend_ = (renderer_backend == 1 || renderer_backend == 2) ? renderer_backend : 0;
     widescreen_ = widescreen;
     bezel_ = bezel;
     crt_effect_ = crt_effect;
@@ -1534,6 +1534,15 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
         renderer_startup_message_ = "Renderer change applies next launch";
         intent.ui_settings_changed = true;
     }
+    same_line_if_fits("OPENGL");
+    if (ImGui::RadioButton("OPENGL", &renderer, 2)) {
+        renderer_backend_ = 2;
+        renderer_startup_message_ = "Renderer change applies next launch";
+        intent.ui_settings_changed = true;
+    }
+#if defined(__ANDROID__)
+    ImGui::TextColored(kMuted, "Auto uses Vulkan when the device supports it");
+#endif
     ImGui::TextColored(kMuted, "Active: %s",
                        actual_renderer_.empty() ? "detecting" : actual_renderer_.c_str());
     if (!renderer_startup_message_.empty()) {
