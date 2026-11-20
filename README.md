@@ -38,6 +38,17 @@ tools/build-opera-boot.sh /path/to/3do-devkit
 and commit the source and the new image together. Set `-DA3DO_BUILTIN_BIOS=`
 to embed a different image without replacing the file.
 
+## High-resolution rendering
+
+**Settings → System → Resolution** (also in the in-game menu) draws the CEL
+engine's output at 2x to 6x the machine's 320x240. Polygons, rotated and
+scaled sprites keep their true sub-pixel edges instead of stair-stepping on
+the logical grid, and the frame comes out at 320 x scale wide. VRAM is still
+drawn exactly as the hardware draws it, because games read it back; the finer
+picture is a shadow of it (`core/core/hires.*`), so anything the CPU draws
+itself, such as full-motion video, simply stays at native resolution. Native
+is the default. Each step costs more drawing, so phones may want 2x or 3x.
+
 ## Why this exists as a separate core
 
 Two reasons, and the second is the one with a deadline attached.
@@ -262,6 +273,7 @@ application from one that comes up blank.
 - [x] Built-in open-source boot ROM (opera-boot), optional user BIOS
 - [x] RetroMedia account artwork downloads and illustrated library cards (Android)
 - [x] Scanline-timed VDLP updates
+- [x] High-resolution CEL rendering, 2x to 6x
 - [ ] Full MADAM CEL pause/status timing
 - [ ] Remaining CD queries, CD audio and additional PBUS peripherals
 - [ ] Save states

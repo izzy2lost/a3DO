@@ -485,12 +485,16 @@ void App::present() {
         return;
     }
 
+    // A new texture is empty, so it needs this frame even if the frame is not
+    // new - the render scale changing while paused, for instance.
+    const bool resized = frame_texture_ == nullptr || texture_width_ != width ||
+                         texture_height_ != height;
     ensure_frame_texture(width, height);
     if (frame_texture_ == nullptr) {
         return;
     }
 
-    if (is_new) {
+    if (is_new || resized) {
         SDL_UpdateTexture(frame_texture_, nullptr, frame.pixels,
                           width * static_cast<int>(sizeof(u32)));
     }
@@ -727,6 +731,10 @@ void App::load_settings() {
     retro3do_set_cpu_scale_percent(emu_, cpu_scale == 125 || cpu_scale == 150
                                         ? static_cast<u32>(cpu_scale)
                                         : 100u);
+    retro3do_set_render_scale(
+        emu_, static_cast<u32>(std::clamp(
+                  settings_->get_int(settings_key::kRenderScale, 1), 1,
+                  RETRO3DO_MAX_RENDER_SCALE)));
     touch_->load_layout(*settings_);
     ui_->set_performance_visible(
         settings_->get_bool(settings_key::kPerformanceHud, false));
@@ -935,6 +943,8 @@ void App::save_settings() {
                        retro3do_get_region(emu_) == RETRO3DO_REGION_PAL ? 1 : 0);
     settings_->set_int(settings_key::kCpuScale,
                        static_cast<int>(retro3do_get_cpu_scale_percent(emu_)));
+    settings_->set_int(settings_key::kRenderScale,
+                       static_cast<int>(retro3do_get_render_scale(emu_)));
     touch_->save_layout(*settings_);
     settings_->set_bool(settings_key::kPerformanceHud,
                         ui_->performance_visible());
@@ -1470,6 +1480,12 @@ void App::tick() {
     }
     if (intent.cpu_scale_changed) {
         retro3do_set_cpu_scale_percent(emu_, intent.cpu_scale_percent);
+        save_settings();
+    }
+    if (intent.render_scale_changed) {
+        // Takes effect at the emulator's next frame; frames report their own
+        // size, so the texture follows without any further help.
+        retro3do_set_render_scale(emu_, intent.render_scale);
         save_settings();
     }
     if (intent.toggle_touch_controls) {

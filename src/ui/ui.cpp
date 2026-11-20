@@ -1248,6 +1248,32 @@ void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
     ImGui::PopStyleVar();
 }
 
+// How finely the CEL engine draws. 1x is the machine's own picture; above
+// that, polygons and scaled sprites are drawn on a finer grid while video the
+// CPU draws itself stays as it is. Each step costs scale-squared more drawing.
+void Ui::draw_render_scale(retro3do_t* emu, UiIntent& intent, bool compact) {
+    ImGui::TextColored(compact ? kGold : kBlue, "RESOLUTION");
+    int scale = static_cast<int>(retro3do_get_render_scale(emu));
+    static const char* const kLabels[] = {"NATIVE", "2X", "3X", "4X", "5X", "6X"};
+    static const char* const kIds[] = {"NATIVE##rs", "2X##rs", "3X##rs",
+                                       "4X##rs", "5X##rs", "6X##rs"};
+    for (int i = 0; i < RETRO3DO_MAX_RENDER_SCALE; ++i) {
+        if (i != 0) same_line_if_fits(kLabels[i]);
+        if (ImGui::RadioButton(kIds[i], &scale, i + 1)) {
+            intent.render_scale_changed = true;
+            intent.render_scale = static_cast<u32>(i + 1);
+        }
+    }
+    if (!compact) {
+        ImGui::TextColored(kMuted,
+                           "Sharper 3D and scaled sprites. FMV stays native. "
+                           "Higher steps need a faster device.");
+    } else if (scale > 1) {
+        ImGui::TextColored(kMuted, "%dx%d", 320 * scale,
+                           (retro3do_get_region(emu) == RETRO3DO_REGION_PAL ? 288 : 240) * scale);
+    }
+}
+
 // The BIOS choice. The built-in opera-boot needs no files; a real BIOS is an
 // option for anyone who has one, and can be put back to built-in at any time.
 void Ui::draw_bios_panel(UiIntent& intent) {
@@ -1584,6 +1610,9 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     if (ImGui::Checkbox("CRT EFFECT", &crt_effect_)) {
         intent.ui_settings_changed = true;
     }
+
+    ImGui::Separator();
+    draw_render_scale(emu, intent, false);
     end_panel();
 
     if (!stacked) ImGui::SameLine();
@@ -1842,6 +1871,9 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         }
     }
     ImGui::TextColored(kMuted, "Audio, video and FMV remain at native speed.");
+
+    ImGui::Spacing();
+    draw_render_scale(emu, intent, true);
 
     if (active_discs_.size() > 1) {
         ImGui::Spacing();

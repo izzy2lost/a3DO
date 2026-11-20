@@ -48,6 +48,8 @@ struct UiIntent {
     bool set_region_pal = false;
     bool cpu_scale_changed = false;
     u32 cpu_scale_percent = 100;
+    bool render_scale_changed = false;
+    u32 render_scale = 1;
     bool ui_settings_changed = false;
     bool games_folder_chosen = false;
     bool setup_finished = false;
@@ -143,6 +145,7 @@ private:
     void draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
                        UiIntent& intent);
     void draw_bios_panel(UiIntent& intent);
+    void draw_render_scale(retro3do_t* emu, UiIntent& intent, bool compact);
     void draw_pad_editor(TouchPad& touch, UiIntent& intent);
     void draw_artwork(UiIntent& intent);
     void draw_downloads(UiIntent& intent);
