@@ -162,12 +162,17 @@ embed_binary(${A3DO_BUILTIN_BIOS}
 embed_binary(${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf
     ${CMAKE_CURRENT_BINARY_DIR}/generated/roboto_medium_ttf.cpp kRobotoMediumTtf)
 
+# The a3DO logo, drawn on the splash, setup, navigation bar and About page.
+embed_binary(${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/a3do-logo-ui.png
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/a3do_logo_png.cpp kA3doLogoPng)
+
 # ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
 set(RETRO3DO_APP_SOURCES
     ${CMAKE_CURRENT_BINARY_DIR}/generated/opera_boot_rom.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/roboto_medium_ttf.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/a3do_logo_png.cpp
     src/main.cpp
     src/app/path.cpp
     src/app/settings.cpp

@@ -57,21 +57,54 @@ void tricolour_rule(float width, float height) {
     ImGui::Dummy(ImVec2(width, height));
 }
 
-// "a3DO" with the 3, D and O in the three theme colours.
-float wordmark_width(float font_size) {
-    return ImGui::GetFont()->CalcTextSizeA(font_size, FLT_MAX, 0.0f, "a3DO").x;
+// The a3DO logo. Sizes are its height; the text wordmark stands in if the
+// image could not be made into a texture.
+SDL_Texture* g_logo = nullptr;
+float g_logo_aspect = 1.0f;
+
+void load_logo(SDL_Renderer* renderer) {
+    if (g_logo != nullptr || renderer == nullptr) return;
+    SDL_IOStream* io = SDL_IOFromConstMem(kA3doLogoPng, kA3doLogoPng_size);
+    SDL_Surface* surface = io != nullptr ? SDL_LoadPNG_IO(io, true) : nullptr;
+    if (surface == nullptr) return;
+    g_logo = SDL_CreateTextureFromSurface(renderer, surface);
+    if (g_logo != nullptr) {
+        SDL_SetTextureScaleMode(g_logo, SDL_SCALEMODE_LINEAR);
+        SDL_SetTextureBlendMode(g_logo, SDL_BLENDMODE_BLEND);
+        g_logo_aspect = static_cast<float>(surface->w) /
+                        static_cast<float>(std::max(1, surface->h));
+    }
+    SDL_DestroySurface(surface);
 }
 
-void draw_wordmark(ImDrawList* draw, ImVec2 at, float font_size,
+void release_logo() {
+    if (g_logo != nullptr) SDL_DestroyTexture(g_logo);
+    g_logo = nullptr;
+}
+
+float wordmark_width(float height) {
+    if (g_logo != nullptr) return height * g_logo_aspect;
+    return ImGui::GetFont()->CalcTextSizeA(height, FLT_MAX, 0.0f, "a3DO").x;
+}
+
+void draw_wordmark(ImDrawList* draw, ImVec2 at, float height,
                    float alpha = 1.0f) {
+    if (g_logo != nullptr) {
+        draw->AddImage(
+            ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(g_logo))),
+            at, ImVec2(at.x + height * g_logo_aspect, at.y + height),
+            ImVec2(0, 0), ImVec2(1, 1),
+            IM_COL32(255, 255, 255, static_cast<int>(alpha * 255.0f)));
+        return;
+    }
     ImFont* font = ImGui::GetFont();
     const char* letters[] = {"a", "3", "D", "O"};
     const ImVec4 colours[] = {kText, kRed, kGold, kBlue};
     for (int i = 0; i < 4; ++i) {
         ImVec4 shade = colours[i];
         shade.w *= alpha;
-        draw->AddText(font, font_size, at, colour(shade), letters[i]);
-        at.x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, letters[i]).x;
+        draw->AddText(font, height, at, colour(shade), letters[i]);
+        at.x += font->CalcTextSizeA(height, FLT_MAX, 0.0f, letters[i]).x;
     }
 }
 
@@ -271,6 +304,7 @@ bool Ui::init(SDL_Window* window, SDL_Renderer* renderer) {
     if (!ImGui_ImplSDLRenderer3_Init(renderer)) return false;
 
     renderer_ = renderer;
+    load_logo(renderer_);
 
     splash_started_ms_ = SDL_GetTicks();
     last_pointer_activity_ms_ = splash_started_ms_;
@@ -474,6 +508,7 @@ void Ui::shutdown() {
     if (!initialised_) return;
     clear_artwork_textures();
     release_ui_texture();
+    release_logo();
     if (renderer_ != nullptr) ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -485,6 +520,7 @@ void Ui::suspend_renderer() {
     if (!initialised_ || renderer_ == nullptr) return;
     release_artwork_textures();
     release_ui_texture();
+    release_logo();
     ImGui_ImplSDLRenderer3_Shutdown();
     renderer_ = nullptr;
 }
@@ -495,6 +531,7 @@ bool Ui::resume_renderer(SDL_Renderer* renderer) {
     }
     if (!ImGui_ImplSDLRenderer3_Init(renderer)) return false;
     renderer_ = renderer;
+    load_logo(renderer_);
     const float density = SDL_GetWindowPixelDensity(window_);
     if (density > 0.0f) SDL_SetRenderScale(renderer, density, density);
     return true;
@@ -748,16 +785,14 @@ void Ui::draw_splash() {
     // The wordmark fades in, the bar grows under it, then the strapline.
     const float t = std::min(1.0f, (SDL_GetTicks() - splash_started_ms_) / 900.0f);
     const float ease = 1.0f - (1.0f - t) * (1.0f - t);
-    const float size = std::min(96.0f * scale_, viewport->Size.y * 0.24f);
+    const float size = std::min({300.0f * scale_, viewport->Size.y * 0.45f,
+                                 viewport->Size.x * 0.8f / wordmark_width(1.0f)});
     const float width = wordmark_width(size);
     const ImVec2 centre(top.x + viewport->Size.x * 0.5f,
                         top.y + viewport->Size.y * 0.44f);
-    draw_wordmark(draw, ImVec2(centre.x - width * 0.5f, centre.y - size * 0.6f),
+    draw_wordmark(draw, ImVec2(centre.x - width * 0.5f, centre.y - size * 0.55f),
                   size, ease);
-    const float bar_width = width * ease;
-    const float bar_top = centre.y + size * 0.5f;
-    draw_tricolour_bar(draw, ImVec2(centre.x - bar_width * 0.5f, bar_top),
-                       ImVec2(centre.x + bar_width * 0.5f, bar_top + 5.0f * scale_));
+    const float bar_top = centre.y + size * 0.45f;
 
     const char* strap = "3DO INTERACTIVE MULTIPLAYER EMULATOR";
     const ImVec2 strap_size = ImGui::CalcTextSize(strap);
@@ -807,7 +842,7 @@ void Ui::draw_setup_wizard(UiIntent& intent) {
     ImGui::PushTextWrapPos(0.0f);
 
     // Brand header: wordmark and the tricolour rule.
-    const float mark_size = 40.0f * scale_;
+    const float mark_size = 96.0f * scale_;
     const ImVec2 mark_at = ImGui::GetCursorScreenPos();
     draw_wordmark(ImGui::GetWindowDrawList(), mark_at, mark_size);
     ImGui::Dummy(ImVec2(wordmark_width(mark_size), mark_size));
@@ -888,8 +923,11 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float row_gap = ImGui::GetStyle().ItemSpacing.y;
     const float button_h = 34.0f * scale_;
-    const float mark_size = 28.0f * scale_;
+    const float mark_size = 50.0f * scale_;
     const float mark_width = wordmark_width(mark_size) + 14.0f * scale_;
+    // Buttons sit vertically centred on the logo's row.
+    const float row_h = std::max(button_h, mark_size);
+    const float button_y = bar_top.y + (row_h - button_h) * 0.5f;
     const int page_count = 4 + (retro_media_admin_ ? 1 : 0);
     // Apple's guidance is that an iOS app is never quit by the app itself, and
     // a visible quit control is a known review rejection. The system gesture is
@@ -902,22 +940,22 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const float action_width = 78.0f * scale_;
 
     draw_wordmark(ImGui::GetWindowDrawList(),
-                  ImVec2(bar_top.x, bar_top.y + (button_h - mark_size) * 0.5f),
+                  ImVec2(bar_top.x, bar_top.y + (row_h - mark_size) * 0.5f),
                   mark_size);
 
     float tab_x = bar_top.x + mark_width;
-    float tab_y = bar_top.y;
+    float tab_y = button_y;
     float tab_width = 0.0f;
     float actions_x = 0.0f;
-    float bar_height = button_h;
+    float bar_height = row_h;
     if (narrow) {
         // Actions right-aligned on the wordmark row; tabs across the next.
         actions_x = bar_top.x + full_width -
                     action_count * action_width - (action_count - 1) * gap;
         tab_x = bar_top.x;
-        tab_y = bar_top.y + button_h + row_gap;
+        tab_y = bar_top.y + row_h + row_gap;
         tab_width = (full_width - gap * (page_count - 1)) / page_count;
-        bar_height = button_h * 2.0f + row_gap;
+        bar_height = row_h + button_h + row_gap;
     } else {
         const float row = full_width - mark_width;
         tab_width = (row - gap * (page_count + action_count - 1)) /
@@ -965,7 +1003,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const float each_action = narrow ? action_width : tab_width;
     float action_cursor = actions_x;
     if (session_available_) {
-        ImGui::SetCursorScreenPos(ImVec2(action_cursor, bar_top.y));
+        ImGui::SetCursorScreenPos(ImVec2(action_cursor, button_y));
         action_cursor += each_action + gap;
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.36f, 0.22f, 1.0f));
         if (ImGui::Button("RESUME", ImVec2(each_action, button_h))) {
@@ -976,7 +1014,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         ImGui::PopStyleColor();
     }
 #if !RETRO3DO_PLATFORM_IOS
-    ImGui::SetCursorScreenPos(ImVec2(action_cursor, bar_top.y));
+    ImGui::SetCursorScreenPos(ImVec2(action_cursor, button_y));
     if (ImGui::Button("EXIT", ImVec2(each_action, button_h))) {
         intent.quit = true;
     }
@@ -1610,7 +1648,7 @@ void Ui::draw_about() {
 
     begin_panel("##about_story", column_width, stacked);
     {
-        const float size = 36.0f * scale_;
+        const float size = 120.0f * scale_;
         draw_wordmark(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), size);
         ImGui::Dummy(ImVec2(wordmark_width(size), size));
     }

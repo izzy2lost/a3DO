@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/branding/a3do-logo.png" alt="a3DO" width="320"></p>
+
 # a3DO
 
 A 3DO Interactive Multiplayer emulator for phones, tablets and desktops
