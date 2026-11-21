@@ -1494,13 +1494,19 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     const float unit = cover_h * 0.705f;        // a front-cover width
     // The box and its reflection (0.3 of its height) sit in the middle.
     const float stack_h = cover_h * (reflect_room + (kNearGrow - 1.0f) * 0.5f);
+    const float margin = std::max(0.0f, (flow_height - stack_h) * 0.5f);
+    // Turning over, the box passes edge-on and its near corner grows to about
+    // 10% taller. Rather than shrink every box for that moment, the boxes
+    // and everything under them move down into the slack below the buttons.
+    constexpr float kTurnGrow = 1.11f;
+    const float drop = std::max(0.0f, cover_h * (kTurnGrow - kNearGrow) * 0.5f - margin);
+    const float flow_drawn = flow_height + drop;
     const ImVec2 centre(origin.x + avail.x * 0.5f,
-                        origin.y + std::max(0.0f, (flow_height - stack_h) * 0.5f) +
-                            cover_h * kNearGrow * 0.5f);
+                        origin.y + margin + drop + cover_h * kNearGrow * 0.5f);
     const float camera = cover_h * 4.0f;
 
     // ---- input ---------------------------------------------------------
-    ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_height));
+    ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_drawn));
     const bool hovered = ImGui::IsItemHovered();
     const float spacing = unit * 0.54f;          // screen px per index, side covers
     if (ImGui::IsItemActivated()) {
@@ -1660,7 +1666,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
 
     // ---- drawing -------------------------------------------------------
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + flow_height), true);
+    draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + flow_drawn), true);
     const ImVec2 white_uv = ImGui::GetFontTexUvWhitePixel();
 
     // Seen from above, a box is a rectangle with its four upright edges
@@ -1883,7 +1889,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
 
     // ---- the chosen game ----------------------------------------------
     const LibraryGame& game = *games[static_cast<size_t>(selected)];
-    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + flow_height));
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + flow_drawn));
     char detail[64];
     std::snprintf(detail, sizeof(detail), "%d of %d%s", selected + 1, count,
                   game.discs.size() > 1
