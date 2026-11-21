@@ -1155,7 +1155,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     // Full-width tricolour rule under the bar.
     ImGui::SetCursorScreenPos(ImVec2(bar_top.x, bar_top.y + bar_height + row_gap));
     tricolour_rule(full_width, 3.0f * scale_);
-    ImGui::Spacing();
+    if (!compact_) ImGui::Spacing();
     const ImGuiWindowFlags page_flags = ImGuiWindowFlags_NoScrollbar;
     if (page_ != drawn_page_) {
         ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
@@ -1485,12 +1485,18 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     // A short screen lets the reflection run off the bottom (it is fading
     // out by then anyway) rather than shrink the boxes to fit all of it.
     const float reflect_room = compact_ ? 1.12f : 1.28f;
-    const float cover_h = std::min(flow_height / reflect_room, avail.x * 0.62f / 0.705f);
+    // The chosen box rests turned toward the viewer, so its nearer edge is
+    // closer to the camera and stands about 5% taller than cover_h. Room is
+    // kept for that above it, or its top corner is cut off.
+    constexpr float kNearGrow = 1.06f;
+    const float cover_h = std::min(flow_height / (reflect_room + (kNearGrow - 1.0f) * 0.5f),
+                                   avail.x * 0.62f / 0.705f);
     const float unit = cover_h * 0.705f;        // a front-cover width
     // The box and its reflection (0.3 of its height) sit in the middle.
+    const float stack_h = cover_h * (reflect_room + (kNearGrow - 1.0f) * 0.5f);
     const ImVec2 centre(origin.x + avail.x * 0.5f,
-                        origin.y + std::max(0.0f, (flow_height - cover_h * reflect_room) * 0.5f) +
-                            cover_h * 0.5f);
+                        origin.y + std::max(0.0f, (flow_height - stack_h) * 0.5f) +
+                            cover_h * kNearGrow * 0.5f);
     const float camera = cover_h * 4.0f;
 
     // ---- input ---------------------------------------------------------
