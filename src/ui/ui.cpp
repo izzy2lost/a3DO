@@ -1228,8 +1228,10 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                             ? 4
                             : (available >= 540.0f * scale_
                                    ? 3
-                                   : (available >= 400.0f * scale_ ? 2 : 1));
-    const float card_height = 150.0f * scale_;
+                                   : (available >= 300.0f * scale_ ? 2 : 1));
+    // Tall enough for a cover front to be recognisable at a glance.
+    const float art_height = 168.0f * scale_;
+    const float card_height = art_height + 74.0f * scale_;
 
     // Nested child windows and table cells both introduce their own clip
     // channels. On Android's high-DPI SDL renderer those channels can lag a
@@ -1286,15 +1288,37 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
             const float padding = 10.0f * scale_;
             const float content_left = card_top.x + padding;
             const float content_top = card_top.y + padding;
-            const float art_height = 76.0f * scale_;
-            SDL_Texture* cover = artwork_texture(game.name);
-            if (cover != nullptr) {
+            // The cover pack's front first, then older catalogue art, then
+            // the game's initial on a tile.
+            const CoverTexture* pack = cover_for(game.name);
+            SDL_Texture* cover = pack == nullptr ? artwork_texture(game.name) : nullptr;
+            if (pack != nullptr) {
+                float art_w = art_height * pack->front_aspect;
+                float art_h = art_height;
+                const float room = card_width - padding * 2.0f;
+                if (art_w > room) {
+                    art_h *= room / art_w;
+                    art_w = room;
+                }
+                const ImVec2 art_min(card_top.x + (card_width - art_w) * 0.5f,
+                                     content_top + (art_height - art_h) * 0.5f);
+                const ImVec2 art_max(art_min.x + art_w, art_min.y + art_h);
+                // A soft shadow lifts the cover off the card.
+                draw->AddRectFilled(ImVec2(art_min.x + 3.0f * scale_, art_min.y + 4.0f * scale_),
+                                    ImVec2(art_max.x + 3.0f * scale_, art_max.y + 4.0f * scale_),
+                                    IM_COL32(0, 0, 0, 110), 4.0f * scale_);
+                draw->AddImageRounded(
+                    ImTextureRef(static_cast<ImTextureID>(
+                        reinterpret_cast<intptr_t>(pack->front))),
+                    art_min, art_max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                    IM_COL32_WHITE, 4.0f * scale_);
+            } else if (cover != nullptr) {
                 const ArtworkTexture& item = artwork_.find(game.name)->second;
                 const float aspect = static_cast<float>(item.width) /
                                      static_cast<float>(std::max(1, item.height));
-                const float art_width = std::clamp(art_height * aspect,
-                                                   62.0f * scale_,
-                                                   108.0f * scale_);
+                const float art_width = std::clamp(art_height * aspect, art_height * 0.5f,
+                                                   std::max(art_height * 0.5f,
+                                                            card_width - padding * 2.0f));
                 const float art_left =
                     card_top.x + (card_width - art_width) * 0.5f;
                 draw->AddImage(
@@ -1303,7 +1327,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                     ImVec2(art_left, content_top),
                     ImVec2(art_left + art_width, content_top + art_height));
             } else {
-                const float tile_width = 76.0f * scale_;
+                const float tile_width = art_height * 0.705f;
                 const float tile_left =
                     card_top.x + (card_width - tile_width) * 0.5f;
                 draw->AddRectFilled(
@@ -1311,7 +1335,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                     ImVec2(tile_left + tile_width, content_top + art_height),
                     colour(tinted(accent, 0.16f)), 6.0f * scale_);
                 const char initial[2] = {card_initial(game.name), '\0'};
-                const float initial_size = ImGui::GetFontSize() * 1.7f;
+                const float initial_size = ImGui::GetFontSize() * 2.6f;
                 const ImVec2 initial_bounds = ImGui::GetFont()->CalcTextSizeA(
                     initial_size, FLT_MAX, 0.0f, initial);
                 draw->AddText(
