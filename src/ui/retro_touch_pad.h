@@ -36,7 +36,9 @@ namespace touchpad {
 /* Triangle: three buttons, the first bottom-left, the second on top in the
  * middle, the third bottom-right. Two buttons wide instead of three, so it
  * fits in the bar beside a 4:3 picture on a phone held sideways. */
-enum class Shape { Column, Row, Diamond, Grid3x2, Triangle };
+/* Slant: three buttons rising left to right, the first lowest, as A, B and
+ * C sit on the 3DO pad. */
+enum class Shape { Column, Row, Diamond, Grid3x2, Triangle, Slant };
 enum class Face  { Circle, Pill, Square };
 enum class Stick { Wobble, Dpad };
 

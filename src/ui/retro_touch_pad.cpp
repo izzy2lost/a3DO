@@ -157,8 +157,8 @@ const Profile &profile_3do()
         dpad.stick_size = 190.0f;
         p.clusters = {
             dpad,
-            buttons("face", "A / B / C", 0.92f, 0.70f, Shape::Triangle, {
-                btn("c", "C", kGreen, 80), btn("b", "B", kBlue, 80), btn("a", "A", kRed, 80) }),
+            buttons("face", "A / B / C", 0.92f, 0.70f, Shape::Slant, {
+                btn("a", "A", kRed, 74), btn("b", "B", kBlue, 74), btn("c", "C", kGreen, 74) }),
             buttons("shoulder_l", "L", 0.06f, 0.12f, Shape::Row, {
                 btn("lshift", "L", kSlate, 58, Face::Pill) }),
             buttons("shoulder_r", "R", 0.94f, 0.12f, Shape::Row, {
@@ -584,6 +584,23 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
                                    ImVec2(cc.x + step * 0.5f, cc.y + rise * 0.5f) };
             for (size_t i = 0; i < c.buttons.size() && i < 3; ++i)
                 add_circle("button", c.buttons[i].id, at[i], c.buttons[i].size * sc * 0.5f);
+            break;
+        }
+        case Shape::Slant: {
+            float d = 0;
+            for (const Button &b : c.buttons) d = std::max(d, b.size * sc);
+            /* Neighbours one button plus the gap apart, along a line 45
+             * degrees up from flat. The real pad's row is flatter, but this
+             * keeps all three in the bar beside a 4:3 picture on a phone
+             * held sideways. */
+            const float step = d + gap;
+            const float run = step * 0.707f, rise = step * 0.707f;
+            for (size_t i = 0; i < c.buttons.size() && i < 3; ++i) {
+                const float k = (float)i - 1.0f;
+                add_circle("button", c.buttons[i].id,
+                           ImVec2(cc.x + run * k, cc.y - rise * k),
+                           c.buttons[i].size * sc * 0.5f);
+            }
             break;
         }
         case Shape::Diamond: {

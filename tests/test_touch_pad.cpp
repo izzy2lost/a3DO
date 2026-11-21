@@ -63,6 +63,14 @@ TEST(shared_pad_maps_all_seven_3do_buttons) {
     }
 }
 
+TEST(face_buttons_rise_a_b_c_like_the_real_pad) {
+    // On the 3DO pad A is lowest on the left and C highest on the right.
+    Input input;
+    const ImVec2 a = input.at("a"), b = input.at("b"), c = input.at("c");
+    CHECK(a.x < b.x); CHECK(b.x < c.x);
+    CHECK(a.y > b.y); CHECK(b.y > c.y);
+}
+
 TEST(shared_pad_combines_diagonals_and_simultaneous_fire) {
     Input input;
     const ImVec2 dpad = input.at("dpad"), a = input.at("a");
