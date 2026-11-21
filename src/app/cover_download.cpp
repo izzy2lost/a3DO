@@ -5,6 +5,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
+#include <sstream>
 
 namespace retro3do {
 
@@ -151,6 +153,29 @@ void CoverDownloader::run(std::string base_url, std::string directory, Fetch fet
         ++status_.done;
         if (fetched) ++status_.fetched;
         if (failed) ++status_.failed;
+    }
+
+    // Covers the pack held last time but no longer does (renamed or
+    // dropped) go. Only names the pack itself delivered are on the list, so
+    // covers the user put in the folder are never touched.
+    const std::string record = directory + ".pack.txt";
+    if (!cancel_ && status().failed == 0) {
+        std::set<std::string> current;
+        for (const CoverPackEntry& entry : entries) current.insert(entry.name);
+        size_t old_size = 0;
+        char* old_text = static_cast<char*>(SDL_LoadFile(record.c_str(), &old_size));
+        if (old_text != nullptr) {
+            std::istringstream lines(std::string(old_text, old_size));
+            SDL_free(old_text);
+            for (std::string name; std::getline(lines, name);) {
+                if (safe_image_name(name) && current.count(name) == 0) {
+                    SDL_RemovePath((directory + name).c_str());
+                }
+            }
+        }
+        std::string text;
+        for (const std::string& name : current) text += name + "\n";
+        SDL_SaveFile(record.c_str(), text.data(), text.size());
     }
 
     const Status s = status();

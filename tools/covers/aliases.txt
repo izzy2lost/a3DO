@@ -1,0 +1,22 @@
+# Cover scans whose names do not lead to their Redump title on their own.
+# One per line: scan slug<TAB>Redump title (without the region tags).
+# Add _jp, _eu or _us to the slug for a release with its own title there.
+# make_cover_pack.py prints every scan it had to guess at; add a line here
+# to correct a wrong guess or to place a scan it could not.
+theneedforspeed	Road & Track Presents - The Need for Speed
+gameguru	3DO Game Guru
+espnbaseballinteractivehitting	ESPN Baseball - Hitting
+espnstepaerobics	ESPN Fitness Pros - Step Aerobics
+itsabirdslifewithshellyduvall	Shelley Duvall's It's a Bird's Life
+bishoujosenshisailormoons	Pretty Soldier SailorMoon S
+bodyconsciouspart1shinjukutakashidigitalrave	Bodyconscious Digital Rave! Part 1 - Shinjuku & Takasaki
+doraemonyjdensetsu	Yuujou Densetsu - The Doraemons
+panasonicsamplercd	Panasonic REAL 3DO Interactive Multiplayer - Sampler CD
+virtualcameramanpar1sawadanaomiandjurianna	Virtual Cameraman Part 1 - Naomi Sawada & Anna Juri
+virtualcameramanpar2kawainatsumiandtachiharakimi	Virtual Cameraman Part 2 - Natsumi Kawai & Kimi Tachihara
+virtualcameramanpart3sugimotoyumika	Virtual Cameraman Part 3 - Yumika Sugimoto
+virtualcameramanpart4toyashiori	Virtual Cameraman Part 4 - Shiori Fujitani
+virtualcameramanpart5yuriamdoh	Virtual Cameraman Part 5 - Yuri Andou
+bustamove_jp	Puzzle Bobble
+d_jp	D no Shokutaku
+espngolfloweryourscorewithtomkiteshotmaking_jp	ESPN Golf - Tom Kite no Kore ga Golf da!

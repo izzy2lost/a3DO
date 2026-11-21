@@ -66,3 +66,18 @@ TEST(cover_index_picks_the_games_own_region) {
     CHECK(CoverIndex::title_region("Doctor Hauzer (Japan)") == CoverRegion::jp);
     CHECK(CoverIndex::title_region("FIFA Soccer (Germany)") == CoverRegion::eu);
 }
+
+TEST(cover_index_reads_numerals_and_short_disc_names) {
+    CHECK(CoverIndex::key("Star Control II (USA, Europe)") == "starcontrol2");
+    CHECK(CoverIndex::key("Mad Dog III") == "maddog3");
+    CHECK(CoverIndex::key("Ivory Tower") == "ivorytower");   // only whole words
+    CoverIndex index;
+    // A pack named after Redump titles.
+    index.rebuild("/c", {"starcontrol2.jpg", "twistedthegameshow.jpg", "familyfeud.jpg",
+                         "roadandtrackpresentstheneedforspeed.jpg"});
+    CHECK(index.find("Star Control 2.iso") == "/c/starcontrol2.jpg");
+    CHECK(index.find("Family Feud (USA).chd") == "/c/familyfeud.jpg");
+    CHECK(index.find("Twisted.iso") == "/c/twistedthegameshow.jpg");
+    CHECK(index.find("Need for Speed.cue") == "/c/roadandtrackpresentstheneedforspeed.jpg");
+    CHECK(index.find("Gex.iso").empty());   // too short to search inside names
+}

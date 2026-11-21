@@ -79,3 +79,38 @@ TEST(cover_download_fetches_only_what_is_missing) {
     CHECK_EQ(requests, 2);
     fs::remove_all(dir);
 }
+
+TEST(cover_download_removes_covers_the_pack_renamed_but_not_the_users) {
+    const fs::path dir = fs::temp_directory_path() / "a3do_cover_rename_test";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    std::ofstream(dir / "mine.jpg", std::ios::binary) << "user";
+
+    std::map<std::string, std::string> server = {
+        {"covers.txt", "familyfued.jpg\t2\ngex.jpg\t3\n"},
+        {"familyfued.jpg", "ff"}, {"gex.jpg", "gex"},
+    };
+    const auto fetch = [&](const std::string& url, const std::string& path) -> std::string {
+        const auto found = server.find(url.substr(url.rfind('/') + 1));
+        if (found == server.end()) return "not found on the server";
+        std::ofstream(path, std::ios::binary) << found->second;
+        return {};
+    };
+
+    CoverDownloader d;
+    CHECK(d.start("https://example.org/pack", dir.string(), fetch));
+    wait_for(d);
+    CHECK(fs::exists(dir / "familyfued.jpg"));
+
+    // The pack fixes the typo.
+    server = {{"covers.txt", "familyfeud.jpg\t2\ngex.jpg\t3\n"},
+              {"familyfeud.jpg", "ff"}, {"gex.jpg", "gex"}};
+    CHECK(d.start("https://example.org/pack", dir.string(), fetch));
+    const CoverDownloader::Status s = wait_for(d);
+    CHECK_EQ(s.fetched, 1);
+    CHECK(fs::exists(dir / "familyfeud.jpg"));
+    CHECK(!fs::exists(dir / "familyfued.jpg"));
+    CHECK(fs::exists(dir / "gex.jpg"));
+    CHECK(fs::exists(dir / "mine.jpg"));
+    fs::remove_all(dir);
+}

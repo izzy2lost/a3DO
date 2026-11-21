@@ -113,12 +113,26 @@ std::string CoverIndex::key(const std::string& name, bool* variant,
         text.erase(text.size() - 4);
     }
 
-    // Letters and digits only, with "&" read as "and".
+    // Letters and digits only, with "&" read as "and" and the roman numerals
+    // sequels use read as digits: "Star Control II" and "Star Control 2".
     std::string out;
-    for (size_t i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        if (std::isalnum(c)) out += static_cast<char>(c);
-        else if (c == '&') out += "and";
+    const auto alnum = [&](size_t i) {
+        return std::isalnum(static_cast<unsigned char>(text[i])) != 0;
+    };
+    for (size_t i = 0; i < text.size();) {
+        if (!alnum(i)) {
+            if (text[i] == '&') out += "and";
+            ++i;
+            continue;
+        }
+        size_t end = i;
+        while (end < text.size() && alnum(end)) ++end;
+        const std::string word = text.substr(i, end - i);
+        if (word == "ii") out += '2';
+        else if (word == "iii") out += '3';
+        else if (word == "iv") out += '4';
+        else out += word;
+        i = end;
     }
     return out;
 }
@@ -190,6 +204,17 @@ std::string CoverIndex::find(const std::string& game_name) const {
         for (const auto& [cover, candidate] : by_key_) {
             if (cover.size() < 5 || cover.size() <= best) continue;
             if (k.find(cover) != std::string::npos) {
+                best = cover.size();
+                entry = &candidate;
+            }
+        }
+    }
+    if (entry == nullptr && k.size() >= 6) {
+        // The other way round: "Twisted.iso" for "twistedthegameshow". The
+        // shortest cover name wins, as the one with the least added.
+        size_t best = std::string::npos;
+        for (const auto& [cover, candidate] : by_key_) {
+            if (cover.size() < best && cover.find(k) != std::string::npos) {
                 best = cover.size();
                 entry = &candidate;
             }
