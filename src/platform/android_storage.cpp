@@ -426,6 +426,29 @@ std::string AndroidStorage::retro_media_saved_email() {
                               "()Ljava/lang/String;", nullptr);
 }
 
+void AndroidStorage::set_gesture_exclusion(const std::vector<int>& rects) {
+    JNIEnv* e = env();
+    if (e == nullptr) return;
+    jclass cls = activity_class(e);
+    if (cls == nullptr) {
+        clear_pending_exception(e);
+        return;
+    }
+    jmethodID method = e->GetStaticMethodID(cls, "nativeSetGestureExclusion", "([I)V");
+    if (method != nullptr) {
+        jintArray array = e->NewIntArray(static_cast<jsize>(rects.size()));
+        if (array != nullptr) {
+            if (!rects.empty())
+                e->SetIntArrayRegion(array, 0, static_cast<jsize>(rects.size()),
+                                     reinterpret_cast<const jint*>(rects.data()));
+            e->CallStaticVoidMethod(cls, method, array);
+            e->DeleteLocalRef(array);
+        }
+    }
+    clear_pending_exception(e);
+    e->DeleteLocalRef(cls);
+}
+
 }  // namespace retro3do
 
 #else  // not Android
@@ -458,6 +481,7 @@ std::vector<RetroMediaGame> AndroidStorage::retro_media_catalogue() { return {};
 std::vector<RetroMediaArtwork> AndroidStorage::retro_media_artwork(
     const std::string&) { return {}; }
 std::string AndroidStorage::retro_media_saved_email() { return {}; }
+void AndroidStorage::set_gesture_exclusion(const std::vector<int>&) {}
 
 }  // namespace retro3do
 

@@ -192,6 +192,11 @@ bool TouchPad::control_bounds(const std::string& id, ImVec2* min, ImVec2* max) c
     return overlay_.bounds_of(id, min, max);
 }
 
+std::vector<std::pair<ImVec2, ImVec2>> TouchPad::all_control_bounds() const {
+    if (!visible() || !active_) return {};
+    return overlay_.all_bounds();
+}
+
 bool TouchPad::draw_designer(bool close_popup) {
     bool changed = false;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();

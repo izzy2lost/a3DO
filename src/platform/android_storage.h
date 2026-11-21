@@ -131,6 +131,12 @@ public:
     static std::vector<RetroMediaArtwork> retro_media_artwork(
         const std::string& media_type);
     static std::string retro_media_saved_email();
+
+    // Where edge swipes belong to the app rather than the system: the touch
+    // controls. Without this a thumb that lands on the D-pad near the edge
+    // and slides inward is taken as a system gesture and pulls the bars
+    // in. Rectangles are in pixels as {x, y, w, h} quadruples.
+    static void set_gesture_exclusion(const std::vector<int>& rects);
 };
 
 }  // namespace retro3do

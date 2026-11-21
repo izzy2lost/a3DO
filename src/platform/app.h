@@ -121,6 +121,7 @@ private:
     void save_state_slot(int slot);
     void load_state_slot(int slot);
     void present();
+    void update_gesture_exclusion();
     void ensure_frame_texture(int width, int height);
     void suspend_renderer();
     bool resume_renderer();
@@ -176,6 +177,9 @@ private:
     // Reused across saves so a save does not allocate thirty-two kilobytes.
     std::vector<u8> nvram_scratch_;
     std::string save_state_dir_;   // the disc in the drive's slots; empty with none
+    // The touch controls' boxes as last handed to Android, in pixels, so the
+    // system is only told again when they move.
+    std::vector<int> gesture_exclusion_;
 
     SelfTestResult selftest_;
 

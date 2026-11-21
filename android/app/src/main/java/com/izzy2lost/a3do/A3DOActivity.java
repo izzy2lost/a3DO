@@ -1,5 +1,6 @@
 package com.izzy2lost.a3do;
 
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.SharedPreferences;
@@ -13,6 +14,7 @@ import android.view.Display;
 import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLSurface;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -114,10 +116,21 @@ public class A3DOActivity extends SDLActivity {
     }
 
     @Override
+    protected SDLSurface createSDLSurface(Context context) {
+        return new A3DOSurface(context);
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         instance = this;
         documents = new DocumentAccess(this);
         super.onCreate(savedInstanceState);
+        // Edge to edge on every version, not only where Android 15 enforces
+        // it: the window runs under the bars and the cutout, and the native
+        // side keeps its controls inside the safe area A3DOSurface reports.
+        if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+            getWindow().setDecorFitsSystemWindows(false);
+        }
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
         requestFastestDisplayMode();
     }
@@ -210,6 +223,29 @@ public class A3DOActivity extends SDLActivity {
         // is what calls in here.
         self.runOnUiThread(new Runnable() {
             @Override public void run() { self.documents.pickFolder(); }
+        });
+    }
+
+    /**
+     * The touch controls' boxes, in pixels as x, y, w, h runs, as places
+     * where an edge swipe is the game's and not the system's. Android honours
+     * at most 200dp of each side edge, which covers the D-pad and the face
+     * buttons, the controls a thumb slides on.
+     */
+    public static void nativeSetGestureExclusion(final int[] rects) {
+        final A3DOActivity self = instance;
+        if (self == null || Build.VERSION.SDK_INT < 29 /* Android 10 */) return;
+        self.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (mSurface == null) return;
+                ArrayList<android.graphics.Rect> list = new ArrayList<>();
+                for (int i = 0; i + 3 < rects.length; i += 4) {
+                    list.add(new android.graphics.Rect(rects[i], rects[i + 1],
+                                                       rects[i] + rects[i + 2],
+                                                       rects[i + 1] + rects[i + 3]));
+                }
+                mSurface.setSystemGestureExclusionRects(list);
+            }
         });
     }
 

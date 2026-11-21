@@ -187,6 +187,8 @@ public:
     /* Where a control was drawn last frame, in window points. False when it
      * was not drawn (hidden, or the pad not shown). */
     bool bounds_of(const std::string &id, ImVec2 *min, ImVec2 *max) const;
+    /* The box round every control drawn last frame, as min/max pairs. */
+    std::vector<std::pair<ImVec2, ImVec2>> all_bounds() const;
 
     /* Let go of everything held: leaving the game, hiding the pad. */
     void release_all(const Sink &sink);

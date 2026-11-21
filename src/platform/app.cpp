@@ -356,6 +356,27 @@ bool App::lifecycle_event_watch(void* userdata, SDL_Event* event) {
     return true;
 }
 
+// Edge to edge, the touch controls reach into the side edges where Android
+// listens for its back and bar-reveal swipes. Those swipes start where the
+// controls are, so the controls' boxes (with a little slack) are handed to
+// the system as the app's own.
+void App::update_gesture_exclusion() {
+    if (!AndroidStorage::available()) return;
+    std::vector<int> rects;
+    const float density = std::max(1.0f, SDL_GetWindowPixelDensity(window_));
+    const float slack = 12.0f;
+    for (const auto& [lo, hi] : touch_->all_control_bounds()) {
+        const int x0 = static_cast<int>((lo.x - slack) * density);
+        const int y0 = static_cast<int>((lo.y - slack) * density);
+        const int x1 = static_cast<int>((hi.x + slack) * density);
+        const int y1 = static_cast<int>((hi.y + slack) * density);
+        rects.insert(rects.end(), {x0, y0, x1 - x0, y1 - y0});
+    }
+    if (rects == gesture_exclusion_) return;
+    gesture_exclusion_ = rects;
+    AndroidStorage::set_gesture_exclusion(rects);
+}
+
 void App::suspend_renderer() {
     if (renderer_suspended_ || renderer_ == nullptr) return;
 
@@ -1556,6 +1577,7 @@ void App::tick() {
     const UiIntent intent =
         ui_->build(emu_, emulating_, smoothed_fps, emu.emulated_fps,
                    emu.frame_ms, emu.audio_underruns, *touch_);
+    update_gesture_exclusion();
 
     if (intent.games_folder_chosen) {
         scan_games_folder(intent.folder_name, intent.folder_path);

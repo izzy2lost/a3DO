@@ -660,6 +660,18 @@ bool Overlay::bounds_of(const std::string &id, ImVec2 *min, ImVec2 *max) const
     return false;
 }
 
+std::vector<std::pair<ImVec2, ImVec2>> Overlay::all_bounds() const
+{
+    std::vector<std::pair<ImVec2, ImVec2>> out;
+    for (const Hit &h : hits_) {
+        const float hx = h.radius > 0 ? h.radius : h.half.x;
+        const float hy = h.radius > 0 ? h.radius : h.half.y;
+        out.push_back({ImVec2(h.centre.x - hx, h.centre.y - hy),
+                       ImVec2(h.centre.x + hx, h.centre.y + hy)});
+    }
+    return out;
+}
+
 const Overlay::Hit *Overlay::hit_at(const ImVec2 &p) const
 {
     /* Extras were added last and sit on top. */

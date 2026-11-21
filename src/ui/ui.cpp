@@ -750,18 +750,13 @@ void Ui::apply_safe_area() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (viewport == nullptr) return;
 
+    // On Android the safe area is the system bars (none while immersive) and
+    // the display cutout - see A3DOSurface, which leaves out the gesture
+    // zones SDL would otherwise count.
     const float left = static_cast<float>(safe.x);
-    float top = static_cast<float>(safe.y);
+    const float top = static_cast<float>(safe.y);
     const float right = static_cast<float>(window_w - (safe.x + safe.w));
-    float bottom = static_cast<float>(window_h - (safe.y + safe.h));
-    // Held sideways, a phone's cutout is on a short side, so a top or bottom
-    // inset is only the status and navigation bars - and the app runs
-    // immersive, with both hidden. Keeping clear of them left an empty strip
-    // across the top of a short landscape screen.
-    if (window_w > window_h) {
-        top = 0.0f;
-        bottom = 0.0f;
-    }
+    const float bottom = static_cast<float>(window_h - (safe.y + safe.h));
 
     viewport->WorkPos = ImVec2(viewport->Pos.x + left, viewport->Pos.y + top);
     viewport->WorkSize = ImVec2(viewport->Size.x - left - right,
@@ -937,19 +932,20 @@ void Ui::poll_setup_picker(UiIntent& intent) {
 // means there is nothing else to configure before playing.
 void Ui::draw_setup_wizard(UiIntent& intent) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // The backdrop runs edge to edge, under the bars and the cutout; only
+    // the card keeps to the safe area.
+    ImGui::GetBackgroundDrawList()->AddRectFilledMultiColor(
+        viewport->Pos,
+        ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y),
+        IM_COL32(18, 18, 24, 255), IM_COL32(18, 18, 24, 255),
+        IM_COL32(6, 6, 9, 255), IM_COL32(6, 6, 9, 255));
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::Begin("##setup_backdrop", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilledMultiColor(
-        viewport->WorkPos,
-        ImVec2(viewport->WorkPos.x + viewport->WorkSize.x,
-               viewport->WorkPos.y + viewport->WorkSize.y),
-        IM_COL32(18, 18, 24, 255), IM_COL32(18, 18, 24, 255),
-        IM_COL32(6, 6, 9, 255), IM_COL32(6, 6, 9, 255));
 
     const float width = std::min(620.0f * scale_, viewport->WorkSize.x * 0.92f);
     const float height = std::min(400.0f * scale_, viewport->WorkSize.y * 0.92f);
