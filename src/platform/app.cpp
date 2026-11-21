@@ -14,6 +14,7 @@
 
 #include "retro3do.h"
 #include "app/builtin_bios.h"
+#include "app/save_slots.h"
 #include "app/settings.h"
 #include "platform/http_fetch.h"
 #include "platform/android_storage.h"
@@ -708,11 +709,59 @@ void App::finish_bios_change() {
 bool App::open_disc(const std::string& path, const std::string& name) {
     if (path.empty()) return false;
     SDL_Log("open disc: %s", path.c_str());
-    if (AndroidStorage::available()) {
-        return retro3do_load_disc_fd(emu_, AndroidStorage::open_document(path),
-                                     (name.empty() ? path : name).c_str()) != 0;
+    const bool opened =
+        AndroidStorage::available()
+            ? retro3do_load_disc_fd(emu_, AndroidStorage::open_document(path),
+                                    (name.empty() ? path : name).c_str()) != 0
+            : retro3do_load_disc(emu_, path.c_str()) != 0;
+    if (opened) {
+        // Slots belong to the disc: a two-disc game keeps a set per disc,
+        // which is also all a state can be loaded into.
+        std::string title = name;
+        if (title.empty()) title = std::filesystem::path(path).filename().string();
+        save_state_dir_ = save_state_dir(Storage::writable_directory(), title);
+        ui_->set_save_state_dir(save_state_dir_);
     }
-    return retro3do_load_disc(emu_, path.c_str()) != 0;
+    return opened;
+}
+
+// ---------------------------------------------------------------------------
+// Save states
+// ---------------------------------------------------------------------------
+void App::save_state_slot(int slot) {
+    if (save_state_dir_.empty() || slot < 1 || slot > kSaveSlots) return;
+    std::error_code error;
+    std::filesystem::create_directories(save_state_dir_, error);
+    const std::string path = slot_state_path(save_state_dir_, slot);
+    if (!retro3do_save_state(emu_, path.c_str())) {
+        SDL_Log("Save state %d failed: %s", slot, retro3do_last_error(emu_));
+        ui_->save_state_finished(slot, false,
+                                 std::string("Could not save: ") + retro3do_last_error(emu_));
+        return;
+    }
+    // What is on screen now is the frame the state was taken after.
+    retro3do_frame frame{};
+    const std::string thumb_path = slot_thumb_path(save_state_dir_, slot);
+    if (retro3do_current_frame(emu_, &frame) &&
+        write_thumbnail(thumb_path, make_thumbnail(frame.pixels, frame.width,
+                                                   frame.height, 320))) {
+        SDL_Log("Saved state %d", slot);
+    } else {
+        std::filesystem::remove(thumb_path, error);   // never another save's picture
+    }
+    ui_->save_state_finished(slot, true, "Saved to slot " + std::to_string(slot) + ".");
+}
+
+void App::load_state_slot(int slot) {
+    if (save_state_dir_.empty() || slot < 1 || slot > kSaveSlots) return;
+    const std::string path = slot_state_path(save_state_dir_, slot);
+    if (!retro3do_load_state(emu_, path.c_str())) {
+        SDL_Log("Load state %d failed: %s", slot, retro3do_last_error(emu_));
+        ui_->load_state_finished(slot, false, retro3do_last_error(emu_));
+        return;
+    }
+    SDL_Log("Loaded state %d", slot);
+    ui_->load_state_finished(slot, true, "Loaded slot " + std::to_string(slot) + ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,7 +1666,11 @@ void App::tick() {
     }
     if (intent.eject) {
         retro3do_eject_disc(emu_);
+        save_state_dir_.clear();
+        ui_->set_save_state_dir({});
     }
+    if (intent.save_state_slot != 0) save_state_slot(intent.save_state_slot);
+    if (intent.load_state_slot != 0) load_state_slot(intent.load_state_slot);
     if (intent.reset) {
         retro3do_request_reset(emu_);
         emulating_ = (retro3do_bios_loaded(emu_) != 0);

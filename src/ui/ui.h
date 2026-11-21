@@ -72,6 +72,8 @@ struct UiIntent {
     std::string retro_media_slug;
     std::string folder_path;
     std::string folder_name;
+    int save_state_slot = 0;   // 1..10: save the running game there
+    int load_state_slot = 0;   // 1..10: put the running game back from there
 };
 
 class Ui {
@@ -103,6 +105,11 @@ public:
                          const std::string& message);
     // The running game was stopped by the application (e.g. a BIOS change).
     void end_session();
+    // Save states: the folder holding the running game's ten slots (empty
+    // with no game), and what became of a save or load the menu asked for.
+    void set_save_state_dir(const std::string& dir);
+    void save_state_finished(int slot, bool ok, const std::string& message);
+    void load_state_finished(int slot, bool ok, const std::string& message);
     void set_performance_visible(bool visible) { performance_visible_ = visible; }
     bool performance_visible() const { return performance_visible_; }
     void configure_video(int renderer_backend, bool widescreen, bool bezel,
@@ -176,6 +183,9 @@ private:
     void draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
                          bool touch_editing, UiIntent& intent);
     void open_quick_menu(bool emulating, UiIntent& intent);
+    void draw_save_states(UiIntent& intent);
+    void refresh_save_slots();
+    void release_save_slot_textures();
     void wake_menu_button();
     void draw_file_browser(UiIntent& intent);
     SDL_Texture* artwork_texture(const std::string& game_name);
@@ -195,6 +205,25 @@ private:
         bool failed = false;
         u64 last_used = 0;
     };
+    struct SaveSlot {
+        bool used = false;
+        std::string when;          // "Nov 21, 1:27 PM"
+        SDL_Texture* thumb = nullptr;
+        float thumb_aspect = 4.0f / 3.0f;
+    };
+    std::string save_state_dir_;
+    SaveSlot save_slots_[10];
+    bool save_states_page_ = false;
+    bool save_slots_stale_ = true;
+    int save_state_busy_ = 0;        // slot waiting on the app, 0 for none
+    int save_confirm_slot_ = 0;      // slot whose SAVE was tapped once
+    u64 save_confirm_ms_ = 0;
+    int save_preview_slot_ = 0;      // slot shown full size
+    std::string save_state_message_;
+    bool save_state_message_ok_ = true;
+    u64 save_state_message_ms_ = 0;
+    bool close_menu_requested_ = false;
+
     const CoverTexture* cover_for(const std::string& game_name);
     void pump_covers();
     void release_cover_textures();

@@ -21,6 +21,7 @@
 #include "platform/android_storage.h"
 #include "platform/platform.h"
 #include "ui/embedded_font.h"
+#include "app/save_slots.h"
 
 namespace retro3do {
 namespace {
@@ -605,6 +606,7 @@ void Ui::shutdown() {
     if (!initialised_) return;
     clear_artwork_textures();
     release_cover_textures();
+    release_save_slot_textures();
     cover_decoder_.reset();
     release_ui_texture();
     release_logo();
@@ -619,6 +621,7 @@ void Ui::suspend_renderer() {
     if (!initialised_ || renderer_ == nullptr) return;
     release_artwork_textures();
     release_cover_textures();
+    release_save_slot_textures();
     release_ui_texture();
     release_logo();
     ImGui_ImplSDLRenderer3_Shutdown();
@@ -808,6 +811,13 @@ UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
         menu_requested_ = false;
         draw_launcher(emu, emulating, touch_visible, touch_editing, intent);
     } else {
+        if (close_menu_requested_) {
+            close_menu_requested_ = false;
+            if (quick_menu_) {
+                quick_menu_ = false;
+                if (resume_after_menu_ && !emulating) intent.toggle_pause = true;
+            }
+        }
         if (menu_requested_) {
             if (quick_menu_) {
                 quick_menu_ = false;
@@ -2360,7 +2370,7 @@ void Ui::draw_about() {
     ImGui::TextWrapped(
         "Commercial games including Road Rash and The Need for Speed reach "
         "correctly rendered gameplay. Compatibility continues to expand; "
-        "save states, CD audio and less-used hardware paths remain future work.");
+        "CD audio and less-used hardware paths remain future work.");
     end_panel();
 
     if (!stacked) ImGui::SameLine();
@@ -2406,8 +2416,243 @@ void Ui::draw_about() {
 
 void Ui::open_quick_menu(bool emulating, UiIntent& intent) {
     quick_menu_ = true;
+    save_states_page_ = false;
+    save_preview_slot_ = 0;
     resume_after_menu_ = emulating;
     if (emulating) intent.toggle_pause = true;
+}
+
+// ---------------------------------------------------------------------------
+// Save states
+// ---------------------------------------------------------------------------
+void Ui::set_save_state_dir(const std::string& dir) {
+    if (dir == save_state_dir_) return;
+    save_state_dir_ = dir;
+    save_slots_stale_ = true;
+    release_save_slot_textures();
+}
+
+void Ui::release_save_slot_textures() {
+    for (SaveSlot& slot : save_slots_) {
+        if (slot.thumb != nullptr) SDL_DestroyTexture(slot.thumb);
+        slot.thumb = nullptr;
+    }
+    save_slots_stale_ = true;
+}
+
+void Ui::refresh_save_slots() {
+    save_slots_stale_ = false;
+    for (SaveSlot& slot : save_slots_) {
+        if (slot.thumb != nullptr) SDL_DestroyTexture(slot.thumb);
+        slot = SaveSlot{};
+    }
+    if (save_state_dir_.empty()) return;
+    static const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    for (int i = 0; i < kSaveSlots; ++i) {
+        SaveSlot& slot = save_slots_[i];
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(slot_state_path(save_state_dir_, i + 1).c_str(), &info) ||
+            info.type != SDL_PATHTYPE_FILE)
+            continue;
+        slot.used = true;
+        SDL_DateTime dt;
+        if (SDL_TimeToDateTime(info.modify_time, &dt, true)) {
+            const int hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+            char text[48];
+            std::snprintf(text, sizeof text, "%s %d, %d:%02d %s",
+                          kMonths[std::clamp(dt.month, 1, 12) - 1], dt.day, hour,
+                          dt.minute, dt.hour < 12 ? "AM" : "PM");
+            slot.when = text;
+        }
+        Thumbnail thumb;
+        if (renderer_ != nullptr &&
+            read_thumbnail(slot_thumb_path(save_state_dir_, i + 1), &thumb)) {
+            slot.thumb = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+                                           SDL_TEXTUREACCESS_STATIC, thumb.width,
+                                           thumb.height);
+            if (slot.thumb != nullptr) {
+                SDL_UpdateTexture(slot.thumb, nullptr, thumb.rgba.data(), thumb.width * 4);
+                slot.thumb_aspect = static_cast<float>(thumb.width) / thumb.height;
+            }
+        }
+    }
+}
+
+void Ui::save_state_finished(int slot, bool ok, const std::string& message) {
+    if (slot == save_state_busy_) save_state_busy_ = 0;
+    save_state_message_ = message;
+    save_state_message_ok_ = ok;
+    save_state_message_ms_ = SDL_GetTicks();
+    save_slots_stale_ = true;
+}
+
+void Ui::load_state_finished(int slot, bool ok, const std::string& message) {
+    if (slot == save_state_busy_) save_state_busy_ = 0;
+    save_state_message_ = message;
+    save_state_message_ok_ = ok;
+    save_state_message_ms_ = SDL_GetTicks();
+    // Straight back into the game, from the moment that was saved.
+    if (ok) close_menu_requested_ = true;
+}
+
+void Ui::draw_save_states(UiIntent& intent) {
+    if (save_slots_stale_) refresh_save_slots();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const u64 now = SDL_GetTicks();
+    if (save_confirm_slot_ != 0 && now - save_confirm_ms_ > 3000) save_confirm_slot_ = 0;
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                  viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    const float menu_width = std::min(520.0f * scale_, viewport->WorkSize.x * 0.92f);
+    ImGui::SetNextWindowSize(ImVec2(menu_width, viewport->WorkSize.y * 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale_);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::Begin("##save_states", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar(2);
+
+    // Header: back on the left, title beside it.
+    if (ImGui::Button("< BACK", ImVec2(0.0f, 36.0f * scale_))) {
+        save_states_page_ = false;
+        save_preview_slot_ = 0;
+    }
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f * scale_);
+    ImGui::SetWindowFontScale(1.4f);
+    ImGui::TextColored(kText, "SAVE STATES");
+    ImGui::SetWindowFontScale(1.0f);
+    if (!save_state_message_.empty() && now - save_state_message_ms_ < 4000) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(save_state_message_ok_ ? kGreen : kError, "%s",
+                           save_state_message_.c_str());
+        ImGui::PopTextWrapPos();
+    } else {
+        ImGui::TextColored(kMuted, "Tap a picture to see it bigger.");
+    }
+    tricolour_rule(ImGui::GetContentRegionAvail().x, 3.0f * scale_);
+
+    // The slots scroll under the header.
+    ImGui::BeginChild("##slots", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
+    const float row_h = 78.0f * scale_;
+    const float thumb_h = row_h - 12.0f * scale_;
+    const float thumb_w = thumb_h * 4.0f / 3.0f;
+    const float button_w = 84.0f * scale_;
+    const float button_h = (row_h - 18.0f * scale_) * 0.5f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    for (int i = 0; i < kSaveSlots; ++i) {
+        const int number = i + 1;
+        SaveSlot& slot = save_slots_[i];
+        ImGui::PushID(number);
+        const ImVec2 row = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        draw->AddRectFilled(row, ImVec2(row.x + width, row.y + row_h),
+                            IM_COL32(255, 255, 255, 10), 10.0f * scale_);
+
+        // The picture, letterboxed into a 4:3 box; tap to enlarge.
+        const ImVec2 box(row.x + 6.0f * scale_, row.y + 6.0f * scale_);
+        draw->AddRectFilled(box, ImVec2(box.x + thumb_w, box.y + thumb_h),
+                            IM_COL32(0, 0, 0, 200), 6.0f * scale_);
+        if (slot.thumb != nullptr) {
+            float w = thumb_w, h = thumb_w / slot.thumb_aspect;
+            if (h > thumb_h) { h = thumb_h; w = thumb_h * slot.thumb_aspect; }
+            const ImVec2 at(box.x + (thumb_w - w) * 0.5f, box.y + (thumb_h - h) * 0.5f);
+            draw->AddImageRounded(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(slot.thumb))), at,
+                                  ImVec2(at.x + w, at.y + h), ImVec2(0, 0), ImVec2(1, 1),
+                                  IM_COL32_WHITE, 6.0f * scale_);
+        } else {
+            const char* empty = slot.used ? "No picture" : "Empty";
+            const ImVec2 ts = ImGui::CalcTextSize(empty);
+            draw->AddText(ImVec2(box.x + (thumb_w - ts.x) * 0.5f, box.y + (thumb_h - ts.y) * 0.5f),
+                          ImGui::GetColorU32(kMuted), empty);
+        }
+        ImGui::SetCursorScreenPos(box);
+        if (ImGui::InvisibleButton("##thumb", ImVec2(thumb_w, thumb_h)) && slot.thumb != nullptr)
+            save_preview_slot_ = number;
+
+        // Name and time.
+        const float text_x = box.x + thumb_w + 12.0f * scale_;
+        const float line = ImGui::GetTextLineHeight();
+        draw->AddText(ImVec2(text_x, row.y + row_h * 0.5f - line - 2.0f * scale_),
+                      ImGui::GetColorU32(kText), ("Slot " + std::to_string(number)).c_str());
+        draw->AddText(ImVec2(text_x, row.y + row_h * 0.5f + 2.0f * scale_),
+                      ImGui::GetColorU32(slot.used ? kMuted : tinted(kMuted, 0.6f)),
+                      slot.used ? (slot.when.empty() ? "Saved" : slot.when.c_str()) : "Empty");
+
+        // SAVE above LOAD on the right. Saving over a used slot takes a
+        // second tap, so a slip of the thumb cannot wipe a save.
+        const float bx = row.x + width - button_w - 6.0f * scale_;
+        const bool busy = save_state_busy_ != 0;
+        ImGui::BeginDisabled(busy);
+        ImGui::SetCursorScreenPos(ImVec2(bx, row.y + 6.0f * scale_));
+        const bool confirming = save_confirm_slot_ == number;
+        ImGui::PushStyleColor(ImGuiCol_Button, confirming ? tinted(kAmber, 0.45f)
+                                                          : tinted(kGreen, 0.22f));
+        if (ImGui::Button(confirming ? "SURE?" : "SAVE", ImVec2(button_w, button_h))) {
+            if (slot.used && !confirming) {
+                save_confirm_slot_ = number;
+                save_confirm_ms_ = now;
+            } else {
+                save_confirm_slot_ = 0;
+                save_state_busy_ = number;
+                intent.save_state_slot = number;
+            }
+        }
+        ImGui::PopStyleColor();
+        ImGui::SetCursorScreenPos(ImVec2(bx, row.y + 12.0f * scale_ + button_h));
+        ImGui::BeginDisabled(!slot.used);
+        ImGui::PushStyleColor(ImGuiCol_Button, tinted(kBlue, 0.30f));
+        if (ImGui::Button("LOAD", ImVec2(button_w, button_h))) {
+            save_confirm_slot_ = 0;
+            save_state_busy_ = number;
+            intent.load_state_slot = number;
+        }
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+
+        ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + row_h + 8.0f * scale_));
+        ImGui::Dummy(ImVec2(width, 0.0f));
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::End();
+
+    // Full-size picture over everything; any tap closes it.
+    if (save_preview_slot_ != 0) {
+        const SaveSlot& slot = save_slots_[save_preview_slot_ - 1];
+        if (slot.thumb == nullptr) {
+            save_preview_slot_ = 0;
+            return;
+        }
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        ImGui::Begin("##save_preview", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings);
+        const float max_w = viewport->WorkSize.x * 0.9f;
+        const float max_h = viewport->WorkSize.y * 0.8f;
+        float w = max_w, h = max_w / slot.thumb_aspect;
+        if (h > max_h) { h = max_h; w = max_h * slot.thumb_aspect; }
+        const ImVec2 at(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
+                        viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f);
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        d->AddImageRounded(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(slot.thumb))), at,
+                           ImVec2(at.x + w, at.y + h), ImVec2(0, 0), ImVec2(1, 1),
+                           IM_COL32_WHITE, 10.0f * scale_);
+        const std::string caption = "Slot " + std::to_string(save_preview_slot_) +
+                                    (slot.when.empty() ? "" : "  -  " + slot.when);
+        const ImVec2 ts = ImGui::CalcTextSize(caption.c_str());
+        d->AddText(ImVec2(at.x + (w - ts.x) * 0.5f, at.y + h + 10.0f * scale_),
+                   ImGui::GetColorU32(kText), caption.c_str());
+        ImGui::SetCursorScreenPos(viewport->Pos);
+        if (ImGui::InvisibleButton("##close_preview", viewport->Size)) save_preview_slot_ = 0;
+        ImGui::End();
+    }
 }
 
 void Ui::draw_overlay(retro3do_t* emu, bool emulating, double display_fps,
@@ -2506,6 +2751,10 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         ImVec2(viewport->Pos.x + viewport->Size.x,
                viewport->Pos.y + viewport->Size.y),
         IM_COL32(4, 4, 6, 190));
+    if (save_states_page_) {
+        draw_save_states(intent);
+        return;
+    }
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
@@ -2537,6 +2786,13 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         if (resume_after_menu_ && !emulating) intent.toggle_pause = true;
     }
     ImGui::PopStyleColor();
+    ImGui::BeginDisabled(save_state_dir_.empty());
+    if (wide_button("SAVE STATES", 42.0f * scale_)) {
+        save_states_page_ = true;
+        save_slots_stale_ = true;
+        save_confirm_slot_ = 0;
+    }
+    ImGui::EndDisabled();
 
     ImGui::Spacing();
     ImGui::TextColored(kGold, "ON-SCREEN CONTROLLER");

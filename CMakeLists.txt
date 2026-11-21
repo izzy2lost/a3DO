@@ -177,6 +177,7 @@ set(RETRO3DO_APP_SOURCES
     src/app/path.cpp
     src/app/settings.cpp
     src/app/cover_download.cpp
+    src/app/save_slots.cpp
     src/platform/app.cpp
     src/platform/http_fetch.cpp
     src/ui/ui.cpp
@@ -337,8 +338,10 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         tests/test_pad_layout.cpp
         tests/test_path.cpp
         tests/test_settings.cpp
+        tests/test_save_slots.cpp
     )
     target_sources(retro3do_tests PRIVATE
+        src/app/save_slots.cpp
         src/app/pad_layout.cpp
         src/app/path.cpp
         src/app/settings.cpp

@@ -118,6 +118,8 @@ private:
     void save_nvram();
     bool open_bios(const std::string& path, const std::string& name);
     bool open_disc(const std::string& path, const std::string& name);
+    void save_state_slot(int slot);
+    void load_state_slot(int slot);
     void present();
     void ensure_frame_texture(int width, int height);
     void suspend_renderer();
@@ -173,6 +175,7 @@ private:
     int persisted_library_count_ = 0;
     // Reused across saves so a save does not allocate thirty-two kilobytes.
     std::vector<u8> nvram_scratch_;
+    std::string save_state_dir_;   // the disc in the drive's slots; empty with none
 
     SelfTestResult selftest_;
 
