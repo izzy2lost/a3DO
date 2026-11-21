@@ -1384,16 +1384,37 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
 //
 // ImGui draws in 2D, so the boxes are projected here. A perspective quad
 // drawn as two affine triangles bends the picture along its diagonal; each
-// face is cut into narrow vertical strips instead, which keeps the bend too
-// small to see.
+// side is cut into narrow vertical strips instead, which keeps the bend too
+// small to see, and lets the strips follow the boxes' rounded edges.
 void Ui::draw_cover_flow(retro3do_t* emu,
                          const std::vector<const LibraryGame*>& games,
                          UiIntent& intent) {
     ImGuiIO& io = ImGui::GetIO();
     const float dt = std::clamp(io.DeltaTime, 1.0f / 240.0f, 0.1f);
     const int count = static_cast<int>(games.size());
-    carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
-    carousel_pos_ = std::clamp(carousel_pos_, -0.5f, static_cast<float>(count) - 0.5f);
+    // With a few games or more the carousel goes round: positions run on past
+    // either end, and fold() brings them back into range together, so the
+    // motion never jumps.
+    const bool wrap = count >= 3;
+    const auto game_at = [&](int i) {
+        return wrap ? ((i % count) + count) % count : std::clamp(i, 0, count - 1);
+    };
+    const auto fold = [&] {
+        const int shift = carousel_target_ - game_at(carousel_target_);
+        if (shift == 0) return;
+        carousel_target_ -= shift;
+        carousel_pos_ -= static_cast<float>(shift);
+        carousel_drag_pos_ -= static_cast<float>(shift);
+    };
+    if (wrap) {
+        fold();
+        if (std::abs(carousel_pos_ - static_cast<float>(carousel_target_)) > count) {
+            carousel_pos_ = static_cast<float>(carousel_target_);
+        }
+    } else {
+        carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
+        carousel_pos_ = std::clamp(carousel_pos_, -0.5f, static_cast<float>(count) - 0.5f);
+    }
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1428,8 +1449,10 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         if (std::abs(dx) > 8.0f * scale_) carousel_moved_ = true;
         if (carousel_moved_) {
             const float previous = carousel_pos_;
-            carousel_pos_ = std::clamp(carousel_drag_pos_ - dx / spacing, -0.4f,
-                                       static_cast<float>(count) - 0.6f);
+            carousel_pos_ = carousel_drag_pos_ - dx / spacing;
+            if (!wrap) {
+                carousel_pos_ = std::clamp(carousel_pos_, -0.4f, static_cast<float>(count) - 0.6f);
+            }
             const float v = (carousel_pos_ - previous) / dt;
             carousel_velocity_ = carousel_velocity_ * 0.6f + v * 0.4f;
         }
@@ -1456,7 +1479,8 @@ void Ui::draw_cover_flow(retro3do_t* emu,
             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) ++carousel_target_;
     }
-    carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
+    if (wrap) fold();
+    else carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
     if (!ImGui::IsItemActive() || !carousel_moved_) {
         carousel_pos_ += (static_cast<float>(carousel_target_) - carousel_pos_) *
                          (1.0f - std::exp(-dt * 11.0f));
@@ -1464,7 +1488,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
             carousel_pos_ = static_cast<float>(carousel_target_);
         }
     }
-    const int selected = std::clamp(static_cast<int>(std::lround(carousel_pos_)), 0, count - 1);
+    const int selected = game_at(static_cast<int>(std::lround(carousel_pos_)));
 
     // A turned box turns back when another is chosen; only then may the new
     // one be turned.
@@ -1475,14 +1499,22 @@ void Ui::draw_cover_flow(retro3do_t* emu,
 
     // ---- geometry ------------------------------------------------------
     struct Placed {
-        int index;
+        int index;                  // position on the carousel; may run past the ends
+        int game;                   // the game there
         float x, z, angle, depth;   // depth: distance from the middle, for order
         float w, d;                 // box width and depth
+        float fade;                 // 1, falling to 0 at the far ends of a wrap
         const CoverTexture* cover;
     };
     std::vector<Placed> placed;
-    const int first = std::max(0, static_cast<int>(std::floor(carousel_pos_)) - 7);
-    const int last = std::min(count - 1, static_cast<int>(std::ceil(carousel_pos_)) + 7);
+    // Up to seven boxes either side. Going round, the window is never wider
+    // than the list, so no game shows twice; a box leaving one end fades out
+    // before it comes in at the other.
+    const float reach = wrap ? std::min(static_cast<float>(count) * 0.5f, 7.5f) : 7.5f;
+    const int first = wrap ? static_cast<int>(std::ceil(carousel_pos_ - reach))
+                           : std::max(0, static_cast<int>(std::floor(carousel_pos_)) - 7);
+    const int last = wrap ? static_cast<int>(std::floor(carousel_pos_ + reach))
+                          : std::min(count - 1, static_cast<int>(std::ceil(carousel_pos_)) + 7);
     constexpr float kSideAngle = 0.96f;   // about 55 degrees
     // The chosen box rests turned a little so its spine shows; a box seen
     // dead on would look like a flat picture. Turned over, it leans the other
@@ -1491,16 +1523,19 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     for (int i = first; i <= last; ++i) {
         const float d = static_cast<float>(i) - carousel_pos_;
         const float ad = std::abs(d);
+        if (wrap && ad >= reach) continue;
         const float sd = d < 0.0f ? -1.0f : 1.0f;
         const float near = std::min(ad, 1.0f);
         Placed p;
         p.index = i;
+        p.game = game_at(i);
         p.x = sd * (near * unit * 0.92f + std::max(ad - 1.0f, 0.0f) * spacing);
         p.z = -near * unit * 0.6f;
-        const float flip = i == flip_index_ ? flip_angle_ : 0.0f;
+        const float flip = p.game == flip_index_ ? flip_angle_ : 0.0f;
         p.angle = sd * near * kSideAngle + (1.0f - near) * kRestAngle * std::cos(flip) + flip;
         p.depth = ad;
-        p.cover = cover_for(games[static_cast<size_t>(i)]->name);
+        p.fade = wrap ? std::clamp((reach - ad) * 2.0f, 0.0f, 1.0f) : 1.0f;
+        p.cover = cover_for(games[static_cast<size_t>(p.game)]->name);
         p.w = p.cover ? cover_h * p.cover->front_aspect : unit;
         // As deep as the printed spine is wide, within reason.
         p.d = cover_h * (p.cover && p.cover->spine_aspect > 0.0f
@@ -1538,7 +1573,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
                 io.MousePos.y > y1) {
                 continue;
             }
-            if (it->index == selected) {
+            if (it->game == selected) {
                 if (flip_index_ == selected) flipped_ = !flipped_;
             } else {
                 carousel_target_ = it->index;
@@ -1560,112 +1595,194 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + flow_height), true);
     const ImVec2 white_uv = ImGui::GetFontTexUvWhitePixel();
 
-    // One upright face of a box, from a to b (box-space x, z) along its top
-    // edge, with u running u_a to u_b. Drawn as vertical strips so the
-    // picture does not shear under perspective, plus its reflection on the
-    // floor. Faces turned away from the camera are skipped; on a box the
-    // rest never overlap, so no sorting is needed. Returns whether it drew.
-    const auto face = [&](const Placed& p, ImVec2 a, ImVec2 b, ImVec2 normal,
-                          SDL_Texture* texture, float u_a, float u_b, ImU32 base,
-                          int strips) {
-        const ImVec2 n = to_world(p, normal.x, normal.y);
-        const ImVec2 n_world(n.x - p.x, n.y - p.z);
-        const ImVec2 mid = to_world(p, (a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-        if (n_world.x * -mid.x + n_world.y * (camera - mid.y) <= 0.0f) return false;
+    // Seen from above, a box is a rectangle with its four upright edges
+    // rounded off. The wrap runs round it in four bands, each from the middle
+    // of one rounded corner to the middle of the next, so the art bends round
+    // the corners the way printed card does: front, open edge, back, spine.
+    struct Rim { float x, z, nx, nz; };   // a point on the outline, outward normal
+    constexpr float kPi = 3.14159265f, kHalfPi = kPi * 0.5f, kQuarterPi = kPi * 0.25f;
+    constexpr int kCornerSteps = 3;       // per half corner
 
-        // Lit from the camera: faces dim as they turn away, sides a little
-        // more, and boxes further out more again.
-        float light = (0.4f + 0.6f * std::max(0.0f, n_world.y)) *
-                      (1.0f - 0.3f * std::min(p.depth, 1.0f));
-        if (normal.x != 0.0f) light *= 0.85f;
-        const auto lit = [&](ImU32 c) {
+    // The band whose flat part faces `side` (the normal's angle, x = cos,
+    // z = sin), cut into `flat` strips between the corners.
+    const auto band_rim = [&](float hw, float hd, float r, float side, int flat) {
+        std::vector<Rim> out;
+        const auto corner = [&](float towards, float from, float to, bool skip_first) {
+            const float cx = (std::cos(towards) < 0.0f ? -1.0f : 1.0f) * (hw - r);
+            const float cz = (std::sin(towards) < 0.0f ? -1.0f : 1.0f) * (hd - r);
+            for (int k = skip_first ? 1 : 0; k <= kCornerSteps; ++k) {
+                const float a = from + (to - from) * static_cast<float>(k) / kCornerSteps;
+                out.push_back({cx + r * std::cos(a), cz + r * std::sin(a), std::cos(a),
+                               std::sin(a)});
+            }
+        };
+        corner(side + kQuarterPi, side + kQuarterPi, side, false);
+        const Rim start = out.back();
+        const size_t before = out.size();
+        corner(side - kQuarterPi, side, side - kQuarterPi, false);
+        const Rim end = out[before];
+        std::vector<Rim> middle;
+        for (int k = 1; k < flat; ++k) {
+            const float t = static_cast<float>(k) / flat;
+            middle.push_back({start.x + (end.x - start.x) * t, start.z + (end.z - start.z) * t,
+                              start.nx, start.nz});
+        }
+        out.insert(out.begin() + static_cast<std::ptrdiff_t>(before), middle.begin(),
+                   middle.end());
+        return out;
+    };
+
+    // The box's outline on screen, for rounding its corners there too: the
+    // rim gives the left and right, and the top and bottom edges get cut by a
+    // quarter circle of radius `round` near each end.
+    struct Outline { float left, right, round; };
+
+    // One band and its reflection on the floor, as vertical strips so the
+    // picture does not shear under perspective. Strips turned away from the
+    // camera are skipped; the box is convex, so the rest never overlap and
+    // need no sorting. Returns whether any of it drew.
+    const auto band = [&](const Placed& p, const std::vector<Rim>& rim, const Outline& outline,
+                          SDL_Texture* texture, float u_a, float u_b, ImU32 base) {
+        const float c = std::cos(p.angle), s = std::sin(p.angle);
+        // Lit from the camera: the surface dims as it turns away, a little
+        // more on the narrow sides, and boxes further out more again.
+        const float distance_dim = 1.0f - 0.3f * std::min(p.depth, 1.0f);
+        const auto shade = [&](const Rim& q, float alpha) {
+            const float facing = -q.nx * s + q.nz * c;
+            const float light = (0.4f + 0.6f * std::max(0.0f, facing)) * distance_dim *
+                                (1.0f - 0.15f * std::abs(q.nx));
             const auto ch = [&](int shift) {
                 return static_cast<ImU32>(std::clamp(
-                    static_cast<float>((c >> shift) & 0xff) * light, 0.0f, 255.0f));
+                    static_cast<float>((base >> shift) & 0xff) * light, 0.0f, 255.0f));
             };
             return ch(IM_COL32_R_SHIFT) << IM_COL32_R_SHIFT |
                    ch(IM_COL32_G_SHIFT) << IM_COL32_G_SHIFT |
-                   ch(IM_COL32_B_SHIFT) << IM_COL32_B_SHIFT;
+                   ch(IM_COL32_B_SHIFT) << IM_COL32_B_SHIFT |
+                   static_cast<ImU32>(alpha * p.fade) << IM_COL32_A_SHIFT;
         };
-        const ImU32 solid = lit(base) | IM_COL32_A_MASK;
-        const ImU32 shine_top = lit(base) | (static_cast<ImU32>(70) << IM_COL32_A_SHIFT);
-        const ImU32 shine_bottom = lit(base);
+
+        std::vector<float> along(rim.size(), 0.0f);
+        for (size_t i = 1; i < rim.size(); ++i) {
+            along[i] = along[i - 1] + std::hypot(rim[i].x - rim[i - 1].x, rim[i].z - rim[i - 1].z);
+        }
+        const float length = std::max(along.back(), 1e-6f);
+
+        const float top = -cover_h * 0.5f, bottom = cover_h * 0.5f;
+        const float reflection = cover_h * 0.3f;
+        struct Column { ImVec2 top, bottom, mirror, fade_end; float v_top, v_bottom; };
+        const auto column = [&](const Rim& q) {
+            Column col;
+            col.top = project(p, q.x, top, q.z);
+            col.bottom = project(p, q.x, bottom, q.z);
+            col.fade_end = project(p, q.x, bottom + reflection, q.z);
+            const float height = std::max(col.bottom.y - col.top.y, 1.0f);
+            const float in = std::min(col.top.x - outline.left, outline.right - col.top.x);
+            float cut = 0.0f;
+            if (in < outline.round) {
+                const float t = outline.round - std::max(in, 0.0f);
+                cut = outline.round -
+                      std::sqrt(std::max(0.0f, outline.round * outline.round - t * t));
+            }
+            cut = std::min(cut, height * 0.25f);
+            // The art is cropped at a rounded corner, not squeezed.
+            col.v_top = cut / height;
+            col.v_bottom = 1.0f - col.v_top;
+            const float floor = col.bottom.y;
+            col.top.y += cut;
+            col.bottom.y -= cut;
+            col.mirror = ImVec2(col.bottom.x, floor + cut);
+            return col;
+        };
 
         const bool textured = texture != nullptr;
         if (textured) {
             draw->PushTexture(ImTextureRef(
                 static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture))));
         }
-        const float top = -cover_h * 0.5f, bottom = cover_h * 0.5f;
-        const float reflection = cover_h * 0.3f;
         const auto uv = [&](float u, float v) { return textured ? ImVec2(u, v) : white_uv; };
-        draw->PrimReserve(strips * 12, strips * 8);
-        for (int s = 0; s < strips; ++s) {
-            const float t0 = static_cast<float>(s) / strips;
-            const float t1 = static_cast<float>(s + 1) / strips;
-            const float x0 = a.x + (b.x - a.x) * t0, z0 = a.y + (b.y - a.y) * t0;
-            const float x1 = a.x + (b.x - a.x) * t1, z1 = a.y + (b.y - a.y) * t1;
-            const float u0 = u_a + (u_b - u_a) * t0, u1 = u_a + (u_b - u_a) * t1;
-            const ImVec2 p00 = project(p, x0, top, z0), p10 = project(p, x1, top, z1);
-            const ImVec2 p01 = project(p, x0, bottom, z0), p11 = project(p, x1, bottom, z1);
-            const ImVec2 r0 = project(p, x0, bottom + reflection, z0);
-            const ImVec2 r1 = project(p, x1, bottom + reflection, z1);
+        bool drew = false;
+        for (size_t i = 0; i + 1 < rim.size(); ++i) {
+            const Rim& q0 = rim[i];
+            const Rim& q1 = rim[i + 1];
+            const float nx = q0.nx + q1.nx, nz = q0.nz + q1.nz;
+            const ImVec2 n_world(nx * c + nz * s, -nx * s + nz * c);
+            const ImVec2 mid = to_world(p, (q0.x + q1.x) * 0.5f, (q0.z + q1.z) * 0.5f);
+            if (n_world.x * -mid.x + n_world.y * (camera - mid.y) <= 0.0f) continue;
+            drew = true;
+            const float u0 = u_a + (u_b - u_a) * along[i] / length;
+            const float u1 = u_a + (u_b - u_a) * along[i + 1] / length;
+            const Column a = column(q0), b = column(q1);
+            const ImU32 solid0 = shade(q0, 255.0f), solid1 = shade(q1, 255.0f);
+            const ImU32 shine0 = shade(q0, 70.0f), shine1 = shade(q1, 70.0f);
+            const ImU32 gone0 = shade(q0, 0.0f), gone1 = shade(q1, 0.0f);
+            draw->PrimReserve(12, 8);
             const ImDrawIdx first_vtx = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
-            draw->PrimWriteVtx(p00, uv(u0, 0.0f), solid);
-            draw->PrimWriteVtx(p10, uv(u1, 0.0f), solid);
-            draw->PrimWriteVtx(p11, uv(u1, 1.0f), solid);
-            draw->PrimWriteVtx(p01, uv(u0, 1.0f), solid);
+            draw->PrimWriteVtx(a.top, uv(u0, a.v_top), solid0);
+            draw->PrimWriteVtx(b.top, uv(u1, b.v_top), solid1);
+            draw->PrimWriteVtx(b.bottom, uv(u1, b.v_bottom), solid1);
+            draw->PrimWriteVtx(a.bottom, uv(u0, a.v_bottom), solid0);
             // The floor shows the bottom of the box upside down, fading out.
-            draw->PrimWriteVtx(p01, uv(u0, 1.0f), shine_top);
-            draw->PrimWriteVtx(p11, uv(u1, 1.0f), shine_top);
-            draw->PrimWriteVtx(r1, uv(u1, 0.7f), shine_bottom);
-            draw->PrimWriteVtx(r0, uv(u0, 0.7f), shine_bottom);
+            draw->PrimWriteVtx(a.mirror, uv(u0, a.v_bottom), shine0);
+            draw->PrimWriteVtx(b.mirror, uv(u1, b.v_bottom), shine1);
+            draw->PrimWriteVtx(b.fade_end, uv(u1, 0.7f), gone1);
+            draw->PrimWriteVtx(a.fade_end, uv(u0, 0.7f), gone0);
             for (int q = 0; q < 2; ++q) {
-                const ImDrawIdx i = static_cast<ImDrawIdx>(first_vtx + q * 4);
-                draw->PrimWriteIdx(i); draw->PrimWriteIdx(i + 1); draw->PrimWriteIdx(i + 2);
-                draw->PrimWriteIdx(i); draw->PrimWriteIdx(i + 2); draw->PrimWriteIdx(i + 3);
+                const ImDrawIdx i0 = static_cast<ImDrawIdx>(first_vtx + q * 4);
+                draw->PrimWriteIdx(i0); draw->PrimWriteIdx(i0 + 1); draw->PrimWriteIdx(i0 + 2);
+                draw->PrimWriteIdx(i0); draw->PrimWriteIdx(i0 + 2); draw->PrimWriteIdx(i0 + 3);
             }
         }
         if (textured) draw->PopTexture();
-        return true;
+        return drew;
     };
 
     constexpr ImU32 kWhite = IM_COL32(255, 255, 255, 255);
     constexpr ImU32 kEdge = IM_COL32(150, 150, 150, 255);
     for (const Placed& p : placed) {
-        const LibraryGame& game = *games[static_cast<size_t>(p.index)];
+        if (p.fade <= 0.0f) continue;
+        const LibraryGame& game = *games[static_cast<size_t>(p.game)];
         const CoverTexture* cover = p.cover;
         const float hw = p.w * 0.5f, hd = p.d * 0.5f;
         const ImVec4 accent = card_accent(game.name);
         SDL_Texture* front = cover ? cover->front : nullptr;
         SDL_Texture* back = cover ? cover->back : nullptr;
 
-        // The wrap runs back | spine | front around the box: the spine joins
-        // the front's left edge to the back's right edge.
-        const bool front_visible =
-            face(p, ImVec2(-hw, hd), ImVec2(hw, hd), ImVec2(0.0f, 1.0f), front, 0.0f, 1.0f,
-                 front ? kWhite : colour(tinted(accent, 0.28f)), 14);
-        face(p, ImVec2(hw, -hd), ImVec2(-hw, -hd), ImVec2(0.0f, -1.0f), back, 0.0f, 1.0f,
-             back ? kWhite : colour(tinted(accent, 0.12f)), 14);
+        // Rounded a little: a third of the depth, at most 3% of the height.
+        const float r = std::min(p.d * 0.32f, cover_h * 0.03f);
+        const std::vector<Rim> front_rim = band_rim(hw, hd, r, kHalfPi, 24);
+        const std::vector<Rim> edge_rim = band_rim(hw, hd, r, 0.0f, 1);
+        const std::vector<Rim> back_rim = band_rim(hw, hd, r, -kHalfPi, 24);
+        const std::vector<Rim> spine_rim = band_rim(hw, hd, r, kPi, 3);
+        Outline outline{FLT_MAX, -FLT_MAX, 0.0f};
+        for (const auto* rim : {&front_rim, &edge_rim, &back_rim, &spine_rim}) {
+            for (const Rim& q : *rim) {
+                const float x = project(p, q.x, 0.0f, q.z).x;
+                outline.left = std::min(outline.left, x);
+                outline.right = std::max(outline.right, x);
+            }
+        }
+        const float perspective = camera / (camera - p.z);
+        outline.round = std::min(cover_h * 0.035f * perspective,
+                                 (outline.right - outline.left) * 0.25f);
+
+        const bool front_visible = band(p, front_rim, outline, front, 0.0f, 1.0f,
+                                        front ? kWhite : colour(tinted(accent, 0.28f)));
+        band(p, back_rim, outline, back, 0.0f, 1.0f,
+             back ? kWhite : colour(tinted(accent, 0.12f)));
         if (cover && cover->spine) {
-            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), cover->spine,
-                 0.0f, 1.0f, kWhite, 3);
+            band(p, spine_rim, outline, cover->spine, 0.0f, 1.0f, kWhite);
         } else if (front) {
             // No printed spine: carry the front's left edge round the side.
-            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), front,
-                 0.004f, 0.012f, kWhite, 1);
+            band(p, spine_rim, outline, front, 0.004f, 0.012f, kWhite);
         } else {
-            face(p, ImVec2(-hw, -hd), ImVec2(-hw, hd), ImVec2(-1.0f, 0.0f), nullptr,
-                 0.0f, 0.0f, colour(tinted(accent, 0.2f)), 1);
+            band(p, spine_rim, outline, nullptr, 0.0f, 0.0f, colour(tinted(accent, 0.2f)));
         }
         // The open edge has nothing printed on it; the front's right edge,
         // carried round and darkened, reads better than bare black.
         if (front) {
-            face(p, ImVec2(hw, hd), ImVec2(hw, -hd), ImVec2(1.0f, 0.0f), front, 0.988f,
-                 0.996f, kEdge, 1);
+            band(p, edge_rim, outline, front, 0.988f, 0.996f, kEdge);
         } else {
-            face(p, ImVec2(hw, hd), ImVec2(hw, -hd), ImVec2(1.0f, 0.0f), nullptr, 0.0f, 0.0f,
-                 colour(tinted(accent, 0.16f)), 1);
+            band(p, edge_rim, outline, nullptr, 0.0f, 0.0f, colour(tinted(accent, 0.16f)));
         }
 
         // No art yet: the initial and title on the front.
@@ -1690,8 +1807,10 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     draw->PopClipRect();
 
     // Prefetch the next few either way so a swipe lands on finished art.
-    for (int i = std::max(0, selected - 9); i <= std::min(count - 1, selected + 9); ++i) {
-        cover_for(games[static_cast<size_t>(i)]->name);
+    const int ahead = std::min(9, (count - 1) / 2);
+    for (int k = -ahead; k <= ahead; ++k) {
+        if (!wrap && (selected + k < 0 || selected + k >= count)) continue;
+        cover_for(games[static_cast<size_t>(game_at(selected + k))]->name);
     }
 
     // ---- the chosen game ----------------------------------------------
