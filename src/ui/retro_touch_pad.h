@@ -33,7 +33,10 @@ namespace touchpad {
 
 /* ---- the model -------------------------------------------------------- */
 
-enum class Shape { Column, Row, Diamond, Grid3x2 };
+/* Triangle: three buttons, the first bottom-left, the second on top in the
+ * middle, the third bottom-right. Two buttons wide instead of three, so it
+ * fits in the bar beside a 4:3 picture on a phone held sideways. */
+enum class Shape { Column, Row, Diamond, Grid3x2, Triangle };
 enum class Face  { Circle, Pill, Square };
 enum class Stick { Wobble, Dpad };
 
@@ -178,6 +181,10 @@ public:
     bool has_selection() const { return !selected_.empty(); }
     const std::string &selection_id() const { return selected_; }
     void clear_selection() { selected_.clear(); }
+
+    /* Where a control was drawn last frame, in window points. False when it
+     * was not drawn (hidden, or the pad not shown). */
+    bool bounds_of(const std::string &id, ImVec2 *min, ImVec2 *max) const;
 
     /* Let go of everything held: leaving the game, hiding the pad. */
     void release_all(const Sink &sink);

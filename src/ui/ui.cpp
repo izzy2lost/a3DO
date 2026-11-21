@@ -818,7 +818,7 @@ UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
             menu_requested_ = false;
         }
         draw_overlay(emu, emulating, display_fps, emulated_fps, frame_ms,
-                     underruns, touch_visible, touch_editing, intent);
+                     underruns, touch_visible, touch_editing, touch, intent);
         touch_active = emulating && !quick_menu_ && !intent.toggle_pause;
         if (touch_active) {
             ImVec2 area_pos, area_size;
@@ -2412,28 +2412,59 @@ void Ui::open_quick_menu(bool emulating, UiIntent& intent) {
 
 void Ui::draw_overlay(retro3do_t* emu, bool emulating, double display_fps,
                       double emulated_fps, double frame_ms, u64 underruns,
-                      bool touch_visible, bool touch_editing, UiIntent& intent) {
+                      bool touch_visible, bool touch_editing,
+                      const TouchPad& touch, UiIntent& intent) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     constexpr u64 kMenuVisibleMs = 3000;
     const bool show_menu_button =
         touch_editing ||
         SDL_GetTicks() - last_pointer_activity_ms_ < kMenuVisibleMs;
     if (show_menu_button && !quick_menu_) {
-        // Top-centre is deliberately outside both shoulder-button hit areas.
-        // The old top-left position covered L on handheld layouts.
-        ImGui::SetNextWindowPos(
-            ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-                   viewport->WorkPos.y + 12.0f * scale_),
-            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.72f);
+        // Just under the L button, clear of the picture's centre and of the
+        // d-pad below it. With no on-screen pad (a physical controller), the
+        // same top-left corner.
+        const float gap = 10.0f * scale_;
+        ImVec2 at(viewport->WorkPos.x + 12.0f * scale_,
+                  viewport->WorkPos.y + 12.0f * scale_);
+        float centre_x = -1.0f;
+        ImVec2 l_min, l_max;
+        if (touch.control_bounds("lshift", &l_min, &l_max)) {
+            centre_x = (l_min.x + l_max.x) * 0.5f;
+            at.y = l_max.y + gap;
+        }
+        const float menu_width = 92.0f * scale_;
+        if (centre_x >= 0.0f) {
+            at.x = std::clamp(centre_x - menu_width * 0.5f,
+                              viewport->WorkPos.x + 6.0f * scale_,
+                              viewport->WorkPos.x + viewport->WorkSize.x - menu_width -
+                                  6.0f * scale_);
+        }
+        ImGui::SetNextWindowPos(at, ImGuiCond_Always);
+        // No panel behind it: just the button.
+        ImGui::SetNextWindowBgAlpha(0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::Begin("##menu_button", nullptr,
                      ImGuiWindowFlags_NoDecoration |
                          ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
-        if (ImGui::Button("MENU", ImVec2(92.0f * scale_, 0.0f))) {
+        ImGui::PopStyleVar(2);
+        // Styled like the pad's own STOP / PLAY pills, so it reads as one
+        // more control rather than a stray piece of the menus.
+        const float menu_height = 34.0f * scale_;
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, menu_height * 0.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.5f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 0.42f, 0.42f, 0.65f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.85f, 0.77f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.45f));
+        ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0, 0, 0, 0));
+        if (ImGui::Button("MENU", ImVec2(menu_width, menu_height))) {
             open_quick_menu(emulating, intent);
         }
+        ImGui::PopStyleColor(5);
+        ImGui::PopStyleVar(2);
         if (touch_editing) {
             ImGui::SameLine();
             if (ImGui::Button("DONE MOVING")) intent.toggle_layout_edit = true;
@@ -2443,8 +2474,10 @@ void Ui::draw_overlay(retro3do_t* emu, bool emulating, double display_fps,
 
     if (!performance_visible_) return;
 
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 12.0f * scale_,
-                                  viewport->WorkPos.y + 68.0f * scale_));
+    // Top centre: the corners belong to the shoulder buttons and Menu.
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                  viewport->WorkPos.y + 8.0f * scale_),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.72f);
     ImGui::Begin("##performance", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |

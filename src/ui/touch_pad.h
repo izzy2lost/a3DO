@@ -36,6 +36,9 @@ public:
                       bool pointer_available = true);
     void draw(const ImVec2& pos, const ImVec2& size);
     bool draw_designer(bool close_popup = false);
+    // Where a control (by id: "lshift", "a", ...) was drawn last frame, in
+    // window points. False while the pad is not on screen.
+    bool control_bounds(const std::string& id, ImVec2* min, ImVec2* max) const;
     const touchpad::Layout& layout() const { return overlay_.layout(); }
 
 private:

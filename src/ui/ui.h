@@ -171,7 +171,8 @@ private:
     void draw_about();
     void draw_overlay(retro3do_t* emu, bool emulating, double display_fps,
                       double emulated_fps, double frame_ms, u64 underruns,
-                      bool touch_visible, bool touch_editing, UiIntent& intent);
+                      bool touch_visible, bool touch_editing,
+                      const TouchPad& touch, UiIntent& intent);
     void draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
                          bool touch_editing, UiIntent& intent);
     void open_quick_menu(bool emulating, UiIntent& intent);

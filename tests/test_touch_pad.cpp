@@ -24,6 +24,16 @@ struct Input {
         for (const auto& b : held) if (b.second) return true;
         return false;
     }
+    // The centre of a control, wherever the current layout puts it. A stray
+    // mouse move makes the pad lay itself out for the window without
+    // pressing anything.
+    ImVec2 at(const char* id) {
+        SDL_Event e{}; e.type = SDL_EVENT_MOUSE_MOTION;
+        pad.handle_event(e, 1280, 720);
+        ImVec2 lo, hi;
+        CHECK(pad.control_bounds(id, &lo, &hi));
+        return ImVec2((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
+    }
 };
 struct Scratch {
     std::filesystem::path dir = std::filesystem::temp_directory_path() /
@@ -35,36 +45,32 @@ struct Scratch {
     }
     ~Scratch() { std::filesystem::remove_all(dir); }
 };
-constexpr float face_y = 720 * 0.73f;
-constexpr float a_x = 1280 * 0.82f + 74;
 }
 
 TEST(shared_pad_maps_all_seven_3do_buttons) {
     Input input;
-    const struct { float x, y; retro3do_pad_button button; } buttons[] = {
-        {a_x, face_y, RETRO3DO_PAD_A},
-        {1280 * 0.82f, face_y, RETRO3DO_PAD_B},
-        {1280 * 0.82f - 74, face_y, RETRO3DO_PAD_C},
-        {1280 * 0.12f, 720 * 0.16f, RETRO3DO_PAD_LEFT_SHIFT},
-        {1280 * 0.88f, 720 * 0.16f, RETRO3DO_PAD_RIGHT_SHIFT},
-        {640 - 25, 720 * 0.88f, RETRO3DO_PAD_STOP},
-        {640 + 25, 720 * 0.88f, RETRO3DO_PAD_PLAY},
+    const struct { const char* id; retro3do_pad_button button; } buttons[] = {
+        {"a", RETRO3DO_PAD_A}, {"b", RETRO3DO_PAD_B}, {"c", RETRO3DO_PAD_C},
+        {"lshift", RETRO3DO_PAD_LEFT_SHIFT}, {"rshift", RETRO3DO_PAD_RIGHT_SHIFT},
+        {"stop", RETRO3DO_PAD_STOP}, {"play", RETRO3DO_PAD_PLAY},
     };
     for (const auto& b : buttons) {
-        CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, b.x, b.y));
+        const ImVec2 p = input.at(b.id);
+        CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, p.x, p.y));
         CHECK(input.held[b.button]);
-        CHECK(input.finger(SDL_EVENT_FINGER_UP, 1, b.x, b.y));
+        CHECK(input.finger(SDL_EVENT_FINGER_UP, 1, p.x, p.y));
         CHECK(!input.any());
     }
 }
 
 TEST(shared_pad_combines_diagonals_and_simultaneous_fire) {
     Input input;
-    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, 1280 * .14f - 40, face_y - 40));
+    const ImVec2 dpad = input.at("dpad"), a = input.at("a");
+    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, dpad.x - 80, dpad.y - 80));
     CHECK(input.held[RETRO3DO_PAD_UP]); CHECK(input.held[RETRO3DO_PAD_LEFT]);
-    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 2, a_x, face_y));
+    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 2, a.x, a.y));
     CHECK(input.held[RETRO3DO_PAD_A]);
-    CHECK(input.finger(SDL_EVENT_FINGER_MOTION, 1, 1280 * .14f + 40, face_y + 40));
+    CHECK(input.finger(SDL_EVENT_FINGER_MOTION, 1, dpad.x + 80, dpad.y + 80));
     CHECK(!input.held[RETRO3DO_PAD_UP]); CHECK(!input.held[RETRO3DO_PAD_LEFT]);
     CHECK(input.held[RETRO3DO_PAD_DOWN]); CHECK(input.held[RETRO3DO_PAD_RIGHT]);
     CHECK(input.held[RETRO3DO_PAD_A]);
@@ -74,18 +80,20 @@ TEST(shared_pad_combines_diagonals_and_simultaneous_fire) {
 
 TEST(shared_pad_keeps_a_button_held_until_both_fingers_lift) {
     Input input;
-    input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y);
-    input.finger(SDL_EVENT_FINGER_DOWN, 2, a_x, face_y);
-    input.finger(SDL_EVENT_FINGER_UP, 1, a_x, face_y);
+    const ImVec2 a = input.at("a");
+    input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y);
+    input.finger(SDL_EVENT_FINGER_DOWN, 2, a.x, a.y);
+    input.finger(SDL_EVENT_FINGER_UP, 1, a.x, a.y);
     CHECK(input.held[RETRO3DO_PAD_A]);
-    input.finger(SDL_EVENT_FINGER_UP, 2, a_x, face_y);
+    input.finger(SDL_EVENT_FINGER_UP, 2, a.x, a.y);
     CHECK(!input.any());
 }
 
 TEST(shared_pad_does_not_release_unrelated_keyboard_directions) {
     Input input;
     input.held[RETRO3DO_PAD_LEFT] = true;  // keyboard already holds left
-    input.finger(SDL_EVENT_FINGER_DOWN, 1, 1280 * .14f, face_y - 50);
+    const ImVec2 dpad = input.at("dpad");
+    input.finger(SDL_EVENT_FINGER_DOWN, 1, dpad.x, dpad.y - 100);
     CHECK(input.held[RETRO3DO_PAD_UP]);
     CHECK(input.held[RETRO3DO_PAD_LEFT]);
     input.pad.release_all();
@@ -96,8 +104,9 @@ TEST(shared_pad_does_not_release_unrelated_keyboard_directions) {
 TEST(shared_pad_releases_on_menu_hide_controller_focus_and_edit) {
     for (int action = 0; action < 5; ++action) {
         Input input;
-        input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y);
-        input.finger(SDL_EVENT_FINGER_DOWN, 2, 1280 * .14f, face_y - 50);
+        const ImVec2 a = input.at("a"), dpad = input.at("dpad");
+        input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y);
+        input.finger(SDL_EVENT_FINGER_DOWN, 2, dpad.x, dpad.y - 100);
         CHECK(input.any());
         switch (action) {
         case 0: input.pad.set_active(false); break;
@@ -115,29 +124,31 @@ TEST(shared_pad_releases_on_menu_hide_controller_focus_and_edit) {
 
 TEST(shared_pad_handles_cancel_and_release_over_a_menu) {
     Input input;
-    CHECK(!input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y, false));
+    const ImVec2 a = input.at("a");
+    CHECK(!input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y, false));
     CHECK(!input.any());
-    input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y);
-    CHECK(input.finger(SDL_EVENT_FINGER_UP, 1, a_x, face_y, false));
+    input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y);
+    CHECK(input.finger(SDL_EVENT_FINGER_UP, 1, a.x, a.y, false));
     CHECK(!input.any());
-    input.finger(SDL_EVENT_FINGER_DOWN, 2, a_x, face_y);
-    CHECK(input.finger(SDL_EVENT_FINGER_CANCELED, 2, a_x, face_y));
+    input.finger(SDL_EVENT_FINGER_DOWN, 2, a.x, a.y);
+    CHECK(input.finger(SDL_EVENT_FINGER_CANCELED, 2, a.x, a.y));
     CHECK(!input.any());
 }
 
 TEST(shared_pad_ignores_synthetic_mouse_and_restores_after_controller_disconnect) {
     Input input;
+    const ImVec2 a = input.at("a");
     SDL_Event e{}; e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
     e.button.button = SDL_BUTTON_LEFT; e.button.which = SDL_TOUCH_MOUSEID;
-    e.button.x = a_x; e.button.y = face_y;
+    e.button.x = a.x; e.button.y = a.y;
     CHECK(!input.pad.handle_event(e, 1280, 720));
     CHECK(!input.any());
     input.pad.set_physical_gamepad_present(true);
     CHECK(input.pad.enabled()); CHECK(!input.pad.visible());
-    CHECK(!input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y));
+    CHECK(!input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y));
     input.pad.set_physical_gamepad_present(false);
     CHECK(input.pad.visible());
-    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y));
+    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y));
     CHECK(input.held[RETRO3DO_PAD_A]);
 }
 
@@ -145,11 +156,12 @@ TEST(shared_pad_editor_drags_and_persists_without_game_input) {
     Scratch scratch;
     Input input;
     input.pad.load_layout(scratch.settings);
+    const ImVec2 a = input.at("a");
     input.pad.set_editing(true);
     const auto before = input.pad.layout().clusters.at("face");
-    input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y);
-    input.finger(SDL_EVENT_FINGER_MOTION, 1, a_x - 128, face_y - 72);
-    input.finger(SDL_EVENT_FINGER_UP, 1, a_x - 128, face_y - 72);
+    input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y);
+    input.finger(SDL_EVENT_FINGER_MOTION, 1, a.x - 128, a.y - 72);
+    input.finger(SDL_EVENT_FINGER_UP, 1, a.x - 128, a.y - 72);
     CHECK(!input.any()); CHECK(input.pad.take_dirty());
     const auto moved = input.pad.layout().clusters.at("face");
     CHECK(std::fabs(moved.dx - (before.dx - .1f)) < .001f);
@@ -185,9 +197,10 @@ TEST(old_individual_button_settings_start_with_the_new_grouped_pad) {
     scratch.settings.set("touch.a.r", "0.0550");
     Input input;
     input.pad.load_layout(scratch.settings);
+    const ImVec2 a = input.at("a");
     CHECK(input.pad.layout().extras.empty());
     for (const auto& cluster : input.pad.layout().clusters) CHECK(cluster.second.visible);
-    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, a_x, face_y));
+    CHECK(input.finger(SDL_EVENT_FINGER_DOWN, 1, a.x, a.y));
     CHECK(input.held[RETRO3DO_PAD_A]);
 }
 
@@ -244,4 +257,30 @@ TEST(shared_pad_corrupt_layout_recovers_to_a_working_3do_profile) {
         const auto decoded = touchpad::Layout::decode(bad, profile);
         CHECK(decoded.encode() == touchpad::Layout::defaults(profile).encode());
     }
+}
+
+TEST(an_untouched_layout_from_an_earlier_build_takes_the_new_defaults) {
+    Scratch scratch;
+    const std::string old =
+        "{\"version\":1,\"profile\":\"3do\",\"stick\":\"dpad\",\"opacity\":0.6,\"clusters\":{"
+        "\"dpad\":{\"pos\":[0.14,0.73],\"scale\":1,\"spacing\":1,\"visible\":true},"
+        "\"face\":{\"pos\":[0.82,0.73],\"scale\":1,\"spacing\":1,\"visible\":true},"
+        "\"meta\":{\"pos\":[0.5,0.88],\"scale\":1,\"spacing\":1,\"visible\":true},"
+        "\"shoulder_l\":{\"pos\":[0.12,0.16],\"scale\":1,\"spacing\":1,\"visible\":true},"
+        "\"shoulder_r\":{\"pos\":[0.88,0.16],\"scale\":1,\"spacing\":1,\"visible\":true}},\"extras\":[]}";
+    { std::ofstream file(scratch.dir / "pad_layout_3do.json"); file << old; }
+    Input input;
+    input.pad.load_layout(scratch.settings);
+    const auto& face = input.pad.layout().clusters.at("face");
+    CHECK(std::fabs(face.dx - 0.92f) < .001f);
+    CHECK(std::fabs(input.pad.layout().opacity - 0.6f) < .001f);
+    const auto saved = touchpad::Layout::load(scratch.dir.string(), touchpad::profile_3do());
+    CHECK(saved.encode() == input.pad.layout().encode());
+
+    // One group moved by the player: the whole layout is theirs and stays.
+    auto edited = touchpad::Layout::decode(old, touchpad::profile_3do());
+    edited.clusters["face"].dx = .70f;
+    CHECK(edited.save(scratch.dir.string()));
+    input.pad.load_layout(scratch.settings);
+    CHECK(input.pad.layout().encode() == edited.encode());
 }

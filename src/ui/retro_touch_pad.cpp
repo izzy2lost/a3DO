@@ -149,17 +149,23 @@ const Profile &profile_3do()
     static const Profile p = [] {
         Profile p; p.id = "3do"; p.name = "3DO pad";
         p.default_stick = Stick::Dpad; p.allow_direction_buttons = true;
+        /* Big enough to hit without looking, and pushed out to the edges so
+         * the thumbs sit beside the picture rather than over it. Clusters
+         * that would hang off the side are slid back in when drawn
+         * (keep_inside), so these positions are "as far out as fits". */
+        Cluster dpad = stick("dpad", "D-pad", 0.08f, 0.70f);
+        dpad.stick_size = 190.0f;
         p.clusters = {
-            stick("dpad", "D-pad", 0.14f, 0.73f),
-            buttons("face", "A / B / C", 0.82f, 0.73f, Shape::Row, {
-                btn("c", "C", kGreen), btn("b", "B", kBlue), btn("a", "A", kRed) }),
-            buttons("shoulder_l", "L", 0.12f, 0.16f, Shape::Row, {
-                btn("lshift", "L", kSlate, 48, Face::Pill) }),
-            buttons("shoulder_r", "R", 0.88f, 0.16f, Shape::Row, {
-                btn("rshift", "R", kSlate, 48, Face::Pill) }),
-            buttons("meta", "Stop / Play", 0.50f, 0.88f, Shape::Row, {
-                btn("stop", "STOP", kGrey, 40, Face::Pill),
-                btn("play", "PLAY", kGrey, 40, Face::Pill) }),
+            dpad,
+            buttons("face", "A / B / C", 0.92f, 0.70f, Shape::Triangle, {
+                btn("c", "C", kGreen, 80), btn("b", "B", kBlue, 80), btn("a", "A", kRed, 80) }),
+            buttons("shoulder_l", "L", 0.06f, 0.12f, Shape::Row, {
+                btn("lshift", "L", kSlate, 58, Face::Pill) }),
+            buttons("shoulder_r", "R", 0.94f, 0.12f, Shape::Row, {
+                btn("rshift", "R", kSlate, 58, Face::Pill) }),
+            buttons("meta", "Stop / Play", 0.50f, 0.92f, Shape::Row, {
+                btn("stop", "STOP", kGrey, 44, Face::Pill),
+                btn("play", "PLAY", kGrey, 44, Face::Pill) }),
         };
         return p;
     }();
@@ -509,7 +515,7 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
 
     /* Narrow areas (a phone held upright) get a smaller pad, so the D-pad and
      * the face buttons still have a gap between them. */
-    const float fit = clampf(size.x / 480.0f, 0.7f, 1.0f);
+    const float fit = clampf(size.x / 460.0f, 0.7f, 1.0f);
 
     for (const Cluster &c : prof_->clusters) {
         auto it = lay_.clusters.find(c.id);
@@ -566,6 +572,20 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
             }
             break;
         }
+        case Shape::Triangle: {
+            float d = 0;
+            for (const Button &b : c.buttons) d = std::max(d, b.size * sc);
+            /* Equilateral, so every pair is exactly one button plus the gap
+             * apart and none of them overlap. */
+            const float step = d + gap;
+            const float rise = step * 0.866f;
+            const ImVec2 at[3] = { ImVec2(cc.x - step * 0.5f, cc.y + rise * 0.5f),
+                                   ImVec2(cc.x,               cc.y - rise * 0.5f),
+                                   ImVec2(cc.x + step * 0.5f, cc.y + rise * 0.5f) };
+            for (size_t i = 0; i < c.buttons.size() && i < 3; ++i)
+                add_circle("button", c.buttons[i].id, at[i], c.buttons[i].size * sc * 0.5f);
+            break;
+        }
         case Shape::Diamond: {
             float d = 0;
             for (const Button &b : c.buttons) d = std::max(d, b.size * sc);
@@ -608,6 +628,19 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
         add_box("extra", e.id, centre_of(e.dx, e.dy), ImVec2(w * 0.5f, s * 0.5f));
         keep_inside(hits_.size() - 1);
     }
+}
+
+bool Overlay::bounds_of(const std::string &id, ImVec2 *min, ImVec2 *max) const
+{
+    for (const Hit &h : hits_) {
+        if (h.id != id) continue;
+        const float hx = h.radius > 0 ? h.radius : h.half.x;
+        const float hy = h.radius > 0 ? h.radius : h.half.y;
+        *min = ImVec2(h.centre.x - hx, h.centre.y - hy);
+        *max = ImVec2(h.centre.x + hx, h.centre.y + hy);
+        return true;
+    }
+    return false;
 }
 
 const Overlay::Hit *Overlay::hit_at(const ImVec2 &p) const

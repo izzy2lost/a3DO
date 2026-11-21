@@ -1,6 +1,7 @@
 #include "touch_pad.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <utility>
 
@@ -33,6 +34,34 @@ bool is_imported_legacy_layout(const touchpad::Layout& layout) {
                 return true;
             });
         if (count != 1) return false;
+    }
+    return true;
+}
+
+// A layout file that is nothing but the defaults of an earlier build: every
+// group where that build put it, at one size, nothing added. Saving settings
+// writes the layout whether or not the player touched it, so this is how most
+// phones hold it. Those players never chose these places and get the current
+// defaults instead; any layout someone actually arranged differs somewhere.
+bool is_untouched_old_default(const touchpad::Layout& layout) {
+    struct Old { const char* id; float x, y; };
+    constexpr Old old[] = {
+        {"dpad", 0.14f, 0.73f}, {"face", 0.82f, 0.73f}, {"meta", 0.50f, 0.88f},
+        {"shoulder_l", 0.12f, 0.16f}, {"shoulder_r", 0.88f, 0.16f},
+    };
+    if (layout.profile != "3do" || !layout.extras.empty() ||
+        layout.clusters.size() != std::size(old))
+        return false;
+    float scale = -1.0f;
+    for (const auto& o : old) {
+        const auto found = layout.clusters.find(o.id);
+        if (found == layout.clusters.end()) return false;
+        const auto& placed = found->second;
+        if (std::abs(placed.dx - o.x) > 0.002f || std::abs(placed.dy - o.y) > 0.002f ||
+            std::abs(placed.spacing - 1.0f) > 0.001f || !placed.visible)
+            return false;
+        if (scale < 0) scale = placed.scale;
+        if (std::abs(placed.scale - scale) > 0.001f) return false;
     }
     return true;
 }
@@ -86,7 +115,11 @@ void TouchPad::reset_layout(int width, int height) {
     release_all();
     const auto& profile = touchpad::profile_3do();
     auto layout = touchpad::Layout::defaults(profile);
-    const float scale = std::clamp(std::min(width_, height_) / 720.0f, 0.5f, 3.0f);
+    // Control sizes are in window points, which are already about the same
+    // physical size on every phone, so a phone keeps 1.0. Only a big screen
+    // (a tablet, a desktop window) grows them. This used to divide by 720,
+    // which on a phone's ~410-point short side shrank Reset to 0.57.
+    const float scale = std::clamp(std::min(width_, height_) / 420.0f, 1.0f, 1.6f);
     for (auto& cluster : layout.clusters) cluster.second.scale = scale;
     overlay_.set(&profile, layout);
 }
@@ -110,6 +143,13 @@ void TouchPad::load_layout(const Settings& settings) {
             if (error) SDL_Log("Could not back up the old touch layout: %s", error.message().c_str());
             if (!overlay_.layout().save(layout_dir_))
                 SDL_Log("Could not save the replacement 3DO controller layout");
+        } else if (is_untouched_old_default(layout)) {
+            // Keep the player's opacity and movement choice; take the new
+            // places and sizes.
+            overlay_.layout().opacity = layout.opacity;
+            overlay_.layout().stick = layout.stick;
+            if (!overlay_.layout().save(layout_dir_))
+                SDL_Log("Could not save the updated 3DO controller layout");
         } else {
             overlay_.set(&profile, layout);
         }
@@ -145,6 +185,11 @@ void TouchPad::draw(const ImVec2& pos, const ImVec2& size) {
     area_pos_ = pos; area_size_ = size;
     if (size.x <= 0 || size.y <= 0 || (!visible() && !editing())) return;
     overlay_.draw(ImGui::GetBackgroundDrawList(), pos, size);
+}
+
+bool TouchPad::control_bounds(const std::string& id, ImVec2* min, ImVec2* max) const {
+    if (!visible() || !active_) return false;
+    return overlay_.bounds_of(id, min, max);
 }
 
 bool TouchPad::draw_designer(bool close_popup) {
