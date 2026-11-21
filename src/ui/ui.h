@@ -214,6 +214,7 @@ private:
     std::string save_state_dir_;
     SaveSlot save_slots_[10];
     bool save_states_page_ = false;
+    bool compact_ = false;           // short landscape screen: slimmer header
     bool save_slots_stale_ = true;
     int save_state_busy_ = 0;        // slot waiting on the app, 0 for none
     int save_confirm_slot_ = 0;      // slot whose SAVE was tapped once

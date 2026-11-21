@@ -751,9 +751,17 @@ void Ui::apply_safe_area() {
     if (viewport == nullptr) return;
 
     const float left = static_cast<float>(safe.x);
-    const float top = static_cast<float>(safe.y);
+    float top = static_cast<float>(safe.y);
     const float right = static_cast<float>(window_w - (safe.x + safe.w));
-    const float bottom = static_cast<float>(window_h - (safe.y + safe.h));
+    float bottom = static_cast<float>(window_h - (safe.y + safe.h));
+    // Held sideways, a phone's cutout is on a short side, so a top or bottom
+    // inset is only the status and navigation bars - and the app runs
+    // immersive, with both hidden. Keeping clear of them left an empty strip
+    // across the top of a short landscape screen.
+    if (window_w > window_h) {
+        top = 0.0f;
+        bottom = 0.0f;
+    }
 
     viewport->WorkPos = ImVec2(viewport->Pos.x + left, viewport->Pos.y + top);
     viewport->WorkSize = ImVec2(viewport->Size.x - left - right,
@@ -1018,12 +1026,27 @@ void Ui::draw_setup_wizard(UiIntent& intent) {
 void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
                        bool touch_editing, UiIntent& intent) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // Paint the whole screen, insets included, so a game left running never
+    // shows through round the edges of the menus.
+    ImGui::GetBackgroundDrawList()->AddRectFilled(
+        viewport->Pos,
+        ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y),
+        ImGui::GetColorU32(ImGuiCol_WindowBg));
+    // A phone held sideways has a few hundred points of height for everything;
+    // the header gives up what it can so the library keeps the rest.
+    compact_ = viewport->WorkSize.x > viewport->WorkSize.y &&
+               viewport->WorkSize.y < 520.0f * scale_;
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
+    if (compact_) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(ImGui::GetStyle().WindowPadding.x, 6.0f * scale_));
+    }
     ImGui::Begin("a3DO", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
+    if (compact_) ImGui::PopStyleVar();
     // Wide screens: the wordmark sits at the left of one row of buttons.
     // Narrow (portrait) screens: the wordmark shares the first row with the
     // RESUME and EXIT actions, and the page tabs get a full-width row of
@@ -1032,8 +1055,8 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
     const float full_width = ImGui::GetContentRegionAvail().x;
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float row_gap = ImGui::GetStyle().ItemSpacing.y;
-    const float button_h = 34.0f * scale_;
-    const float mark_size = 50.0f * scale_;
+    const float button_h = (compact_ ? 30.0f : 34.0f) * scale_;
+    const float mark_size = (compact_ ? 34.0f : 50.0f) * scale_;
     const float mark_width = wordmark_width(mark_size) + 14.0f * scale_;
     // Buttons sit vertically centred on the logo's row.
     const float row_h = std::max(button_h, mark_size);
@@ -1453,17 +1476,20 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float font = ImGui::GetFontSize();
-    const float info_height = font * 2.6f + ImGui::GetFrameHeight() +
+    const float info_height = font * (compact_ ? 1.3f : 2.6f) + ImGui::GetFrameHeight() +
                               ImGui::GetStyle().ItemSpacing.y * 3.0f +
                               (cover_index_.empty() ? font * 2.6f + ImGui::GetFrameHeight() : 0.0f);
     const float flow_height = std::max(120.0f * scale_, avail.y - info_height);
 
     // The box size comes from the space; the reflection takes a quarter more.
-    const float cover_h = std::min(flow_height / 1.28f, avail.x * 0.62f / 0.705f);
+    // A short screen lets the reflection run off the bottom (it is fading
+    // out by then anyway) rather than shrink the boxes to fit all of it.
+    const float reflect_room = compact_ ? 1.12f : 1.28f;
+    const float cover_h = std::min(flow_height / reflect_room, avail.x * 0.62f / 0.705f);
     const float unit = cover_h * 0.705f;        // a front-cover width
     // The box and its reflection (0.3 of its height) sit in the middle.
     const ImVec2 centre(origin.x + avail.x * 0.5f,
-                        origin.y + std::max(0.0f, (flow_height - cover_h * 1.3f) * 0.5f) +
+                        origin.y + std::max(0.0f, (flow_height - cover_h * reflect_room) * 0.5f) +
                             cover_h * 0.5f);
     const float camera = cover_h * 4.0f;
 
@@ -1852,19 +1878,37 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     // ---- the chosen game ----------------------------------------------
     const LibraryGame& game = *games[static_cast<size_t>(selected)];
     ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + flow_height));
-    const ImVec2 title_size = ImGui::CalcTextSize(game.name.c_str(), nullptr, false, avail.x);
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - title_size.x) * 0.5f));
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x);
-    ImGui::TextUnformatted(game.name.c_str());
-    ImGui::PopTextWrapPos();
     char detail[64];
     std::snprintf(detail, sizeof(detail), "%d of %d%s", selected + 1, count,
                   game.discs.size() > 1
                       ? ("  -  " + std::to_string(game.discs.size()) + " discs").c_str()
                       : "");
     const float detail_w = ImGui::CalcTextSize(detail).x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - detail_w) * 0.5f));
-    ImGui::TextColored(kMuted, "%s", detail);
+    if (compact_) {
+        // Name and position share one line.
+        const float sep = ImGui::CalcTextSize("   ").x;
+        const float name_w = std::min(ImGui::CalcTextSize(game.name.c_str()).x,
+                                      avail.x - detail_w - sep);
+        const float x0 = ImGui::GetCursorPosX() +
+                         std::max(0.0f, (avail.x - name_w - sep - detail_w) * 0.5f);
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float sx = at.x - ImGui::GetCursorPosX() + x0;
+        ImGui::PushClipRect(ImVec2(sx, at.y), ImVec2(sx + name_w, at.y + font * 1.5f), true);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(sx, at.y), ImGui::GetColorU32(kText),
+                                            game.name.c_str());
+        ImGui::PopClipRect();
+        ImGui::GetWindowDrawList()->AddText(ImVec2(sx + name_w + sep, at.y),
+                                            ImGui::GetColorU32(kMuted), detail);
+        ImGui::Dummy(ImVec2(avail.x, font));
+    } else {
+        const ImVec2 title_size = ImGui::CalcTextSize(game.name.c_str(), nullptr, false, avail.x);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - title_size.x) * 0.5f));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x);
+        ImGui::TextUnformatted(game.name.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - detail_w) * 0.5f));
+        ImGui::TextColored(kMuted, "%s", detail);
+    }
 
     const float button_w = std::min(avail.x, 360.0f * scale_);
     const float flip_w = button_w * 0.38f;
