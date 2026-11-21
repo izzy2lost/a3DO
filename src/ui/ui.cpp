@@ -1537,10 +1537,12 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         p.fade = wrap ? std::clamp((reach - ad) * 2.0f, 0.0f, 1.0f) : 1.0f;
         p.cover = cover_for(games[static_cast<size_t>(p.game)]->name);
         p.w = p.cover ? cover_h * p.cover->front_aspect : unit;
-        // As deep as the printed spine is wide, within reason.
+        // As deep as the printed spine is wide, up to a slim box. PAL spines
+        // are about 8% of the height; the US template's run to 22%, which
+        // made a brick of every US box, so wider spines are squeezed to fit.
         p.d = cover_h * (p.cover && p.cover->spine_aspect > 0.0f
-                             ? std::clamp(p.cover->spine_aspect, 0.06f, 0.2f)
-                             : 0.09f);
+                             ? std::clamp(p.cover->spine_aspect, 0.05f, 0.09f)
+                             : 0.08f);
         placed.push_back(p);
     }
     std::sort(placed.begin(), placed.end(),
