@@ -384,7 +384,13 @@ void Ui::pump_covers() {
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
         return texture;
     };
-    for (CoverImage& image : cover_decoder_->take_finished()) {
+    for (CoverImage& image : cover_decoder_->take_finished())
+        cover_uploads_.push_back(std::move(image));
+    // Newest first: it is the one most likely still on screen.
+    int budget = 3;
+    while (!cover_uploads_.empty() && budget-- > 0) {
+        CoverImage image = std::move(cover_uploads_.back());
+        cover_uploads_.pop_back();
         const auto found = cover_textures_.find(image.path);
         // Already evicted while it was decoding: drop it, a revisit asks again.
         if (found == cover_textures_.end() || found->second.front != nullptr) continue;
@@ -429,6 +435,7 @@ void Ui::release_cover_textures() {
     if (cover_decoder_) {
         cover_decoder_->cancel_pending();
         cover_decoder_->take_finished();
+        cover_uploads_.clear();
     }
 }
 
@@ -681,8 +688,29 @@ void Ui::process_event(const SDL_Event& event) {
 // Use the panel under the initial touch for the entire gesture. The SDL
 // backend labels touch-generated mouse events, so taps still use the normal
 // widgets while a vertical drag cancels their pending click before release.
+//
+// The content follows the finger from the point the drag is recognised, so
+// it does not jump by the dead zone, and a flick carries on and slows to a
+// stop the way a phone's own lists do.
 void Ui::update_touch_scroll() {
     ImGuiIO& io = ImGui::GetIO();
+    const float dt = std::max(io.DeltaTime, 1.0f / 240.0f);
+
+    // A glide from an earlier flick. Any new press stops it.
+    if (fling_window_ != 0) {
+        ImGuiWindow* window = ImGui::FindWindowByID(fling_window_);
+        if (io.MouseDown[0] || window == nullptr || !window->WasActive) {
+            fling_window_ = 0;
+        } else {
+            const float next = window->Scroll.y + scroll_velocity_ * dt;
+            const float clamped = std::clamp(next, 0.0f, window->ScrollMax.y);
+            ImGui::SetScrollY(window, clamped);
+            scroll_velocity_ *= std::exp(-dt * 3.2f);
+            if (clamped != next || std::abs(scroll_velocity_) < 30.0f * scale_)
+                fling_window_ = 0;
+        }
+    }
+
     if (io.MouseSource != ImGuiMouseSource_TouchScreen) {
         scroll_window_ = 0;
         scroll_dragging_ = false;
@@ -697,21 +725,35 @@ void Ui::update_touch_scroll() {
         }
         scroll_window_ = window ? window->ID : 0;
         scroll_start_y_ = io.MousePos.y;
+        scroll_last_y_ = io.MousePos.y;
         scroll_start_offset_ = window ? window->Scroll.y : 0.0f;
         scroll_dragging_ = false;
+        scroll_velocity_ = 0.0f;
     }
     ImGuiWindow* window = ImGui::FindWindowByID(scroll_window_);
-    if (window && window->WasActive) {
-        const float distance = scroll_start_y_ - io.MousePos.y;
-        if (io.MouseDown[0] && std::abs(distance) > 8.0f * scale_)
+    if (window && window->WasActive && io.MouseDown[0]) {
+        if (!scroll_dragging_ && std::abs(scroll_start_y_ - io.MousePos.y) > 8.0f * scale_) {
             scroll_dragging_ = true;
+            // Pick up from here rather than from the press.
+            scroll_start_y_ = io.MousePos.y;
+            scroll_start_offset_ = window->Scroll.y;
+        }
         if (scroll_dragging_) {
             ImGui::ClearActiveID();
-            ImGui::SetScrollY(window, std::clamp(scroll_start_offset_ + distance,
-                                               0.0f, window->ScrollMax.y));
+            ImGui::SetScrollY(window, std::clamp(scroll_start_offset_ +
+                                                     scroll_start_y_ - io.MousePos.y,
+                                                 0.0f, window->ScrollMax.y));
+            // Smoothed, so one uneven touch sample does not set the fling.
+            const float speed = (scroll_last_y_ - io.MousePos.y) / dt;
+            scroll_velocity_ += (speed - scroll_velocity_) * std::min(1.0f, dt * 18.0f);
         }
+        scroll_last_y_ = io.MousePos.y;
     }
     if (!io.MouseDown[0]) {
+        if (scroll_dragging_ && window && std::abs(scroll_velocity_) > 120.0f * scale_) {
+            fling_window_ = scroll_window_;
+            scroll_velocity_ = std::clamp(scroll_velocity_, -9000.0f * scale_, 9000.0f * scale_);
+        }
         scroll_window_ = 0;
         scroll_dragging_ = false;
     }
@@ -1383,6 +1425,12 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
             const ImVec2 card_bottom(card_top.x + card_width,
                                      card_top.y + card_height);
             if (card_bottom.y < list_clip_min.y || card_top.y > list_clip_max.y) {
+                // Rows just out of view are decoded ahead, so they arrive
+                // with their covers instead of popping in mid-scroll.
+                const float ahead = (card_height + gap) * 2.0f;
+                if (card_bottom.y > list_clip_min.y - ahead &&
+                    card_top.y < list_clip_max.y + ahead)
+                    cover_for(game.name);
                 ImGui::PopID();
                 continue;
             }

@@ -281,6 +281,9 @@ private:
     float scroll_start_y_ = 0.0f;
     float scroll_start_offset_ = 0.0f;
     bool scroll_dragging_ = false;
+    float scroll_velocity_ = 0.0f;    // px per second: the finger's, then the fling's
+    float scroll_last_y_ = 0.0f;
+    u32 fling_window_ = 0;            // still gliding after the finger lifted
     char search_buffer_[128] = {};
     char library_group_ = 0;
     bool picking_games_folder_ = false;
@@ -300,6 +303,9 @@ private:
     std::unordered_map<std::string, ArtworkTexture> artwork_;
     CoverIndex cover_index_;
     std::unique_ptr<CoverDecoder> cover_decoder_;
+    // Decoded covers waiting for the GPU, uploaded a few a frame so a row
+    // arriving together does not stall a scroll.
+    std::vector<CoverImage> cover_uploads_;
     std::unordered_map<std::string, std::string> cover_paths_;   // title -> file
     std::unordered_map<std::string, CoverTexture> cover_textures_;  // file -> GPU
     u64 cover_frame_ = 0;
