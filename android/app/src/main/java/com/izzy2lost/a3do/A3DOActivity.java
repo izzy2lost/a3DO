@@ -463,6 +463,65 @@ public class A3DOActivity extends SDLActivity {
         }
     }
 
+    /**
+     * One RetroAchievements request, called from native code on the
+     * achievements worker thread (src/cheevos/cheevos_http.cpp). Blocking.
+     * Returns the status as four big-endian bytes and then the body; status 0
+     * means no answer, with the reason as the body.
+     */
+    public static byte[] nativeCheevosRequest(String address, String body, String contentType,
+                                              String userAgent) {
+        final int maximum = 8 << 20;
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(address);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("User-Agent", userAgent);
+            if (!body.isEmpty()) {
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type",
+                        contentType.isEmpty() ? "application/x-www-form-urlencoded" : contentType);
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 400 ? connection.getErrorStream()
+                                               : connection.getInputStream();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (stream != null) {
+                try (InputStream input = stream) {
+                    byte[] buffer = new byte[16 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) > 0) {
+                        if (out.size() + count > maximum) throw new Exception("response too large");
+                        out.write(buffer, 0, count);
+                    }
+                }
+            }
+            return cheevosFrame(status, out.toByteArray());
+        } catch (Exception e) {
+            String message = e.getMessage();
+            if (message == null || message.isEmpty()) message = e.getClass().getSimpleName();
+            return cheevosFrame(0, message.getBytes(StandardCharsets.UTF_8));
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private static byte[] cheevosFrame(int status, byte[] body) {
+        byte[] out = new byte[4 + body.length];
+        out[0] = (byte) (status >>> 24);
+        out[1] = (byte) (status >>> 16);
+        out[2] = (byte) (status >>> 8);
+        out[3] = (byte) status;
+        System.arraycopy(body, 0, out, 4, body.length);
+        return out;
+    }
+
     public static String nativeRetroMediaSavedEmail() {
         if (instance == null) return "";
         return instance.retroMediaPreferences().getString("email", "");

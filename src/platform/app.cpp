@@ -23,6 +23,9 @@
 #include "ui/touch_pad.h"
 
 #include "ui/ui.h"
+#include "cheevos/cheevos_client.h"
+#include "cheevos/cheevos_hash.h"
+#include "cheevos/cheevos_http.h"
 
 namespace retro3do {
 namespace {
@@ -84,7 +87,10 @@ App::~App() {
     if (emu_ != nullptr) {
         retro3do_stop(emu_);
         save_nvram();
+        // The session reads the machine's memory; it goes before the machine.
+        retro3do_set_frame_hook(emu_, nullptr, nullptr);
     }
+    if (cheevos_) cheevos_->close();
     retro3do_destroy(emu_);
     emu_ = nullptr;
     ui_.reset();
@@ -314,6 +320,8 @@ bool App::init() {
                                     "Checking account...");
         AndroidStorage::begin_retro_media_status();
     }
+
+    start_cheevos();
 
     retro3do_set_paused(emu_, !start_on_launch_);
     emulating_ = start_on_launch_;
@@ -735,6 +743,7 @@ void App::apply_bios_selection() {
 // progress is stopped at a frame boundary first and the machine is reset onto
 // the new ROM. The player returns to the library.
 void App::begin_bios_change() {
+    if (cheevos_) cheevos_->remove_disc();
     retro3do_set_paused(emu_, true);
     emulating_ = false;
     ui_->end_session();
@@ -765,6 +774,140 @@ bool App::open_disc(const std::string& path, const std::string& name) {
 }
 
 // ---------------------------------------------------------------------------
+// RetroAchievements
+// ---------------------------------------------------------------------------
+namespace {
+
+// Where a save state's achievement progress is kept: beside the state, so a
+// slot overwritten or deleted takes its progress with it.
+std::string progress_path(const std::string& state_path) {
+    return state_path.substr(0, state_path.size() - 4) + ".rap";
+}
+
+CheevosToast toast_from(const cheevos::Notice& n) {
+    CheevosToast t;
+    t.kind = n.type == cheevos::Notice::Type::Earned ? CheevosToast::Kind::Unlock
+             : n.type == cheevos::Notice::Type::Trouble ? CheevosToast::Kind::Problem
+                                                        : CheevosToast::Kind::Info;
+    t.text = n.title;
+    t.detail = n.body;
+    t.points = n.points;
+    t.badge_url = n.image;
+    return t;
+}
+
+}  // namespace
+
+void App::start_cheevos() {
+    cheevos::prepare_http();
+    http_fetch_prepare();   // badges are fetched with the ordinary downloader
+    ui_->set_cheevos_badge_directory(
+        Storage::join(Storage::writable_directory(), "cheevos_badges"));
+    cheevos_ = std::make_unique<cheevos::Session>();
+    if (!cheevos_->open(emu_)) {
+        SDL_Log("RetroAchievements unavailable: %s", cheevos_->why_unavailable().c_str());
+        return;
+    }
+    retro3do_set_frame_hook(
+        emu_, [](void* session) { static_cast<cheevos::Session*>(session)->on_frame(); },
+        cheevos_.get());
+    cheevos::SavedLogin kept;
+    if (cheevos::read_saved_login(Storage::writable_directory(), kept)) {
+        cheevos_token_saved_ = true;
+        cheevos_->resume_sign_in(kept.user, kept.token);
+    }
+    // A game started from the command line is already in the drive.
+    if (start_on_launch_ && retro3do_disc_loaded(emu_)) identify_disc_for_cheevos(false);
+}
+
+void App::identify_disc_for_cheevos(bool swap) {
+    if (!cheevos_ || !retro3do_disc_loaded(emu_)) return;
+    std::string hash, why;
+    const bool known = cheevos::hash_3do_disc(
+        [this](uint32_t lba, uint32_t count, uint8_t* out) {
+            return retro3do_read_disc_sectors(emu_, lba, count, out) != 0;
+        },
+        hash, why);
+    if (!known) {
+        SDL_Log("RetroAchievements cannot identify this disc: %s", why.c_str());
+        cheevos_->remove_disc();
+        return;
+    }
+    SDL_Log("RetroAchievements disc hash %s", hash.c_str());
+    cheevos_->insert_disc(hash, swap);
+}
+
+void App::update_cheevos() {
+    if (!cheevos_) return;
+    cheevos_->pump(emulating_);
+
+    const std::vector<cheevos::Notice> notices = cheevos_->take_notices();
+    for (const cheevos::Notice& n : notices) ui_->push_cheevos_toast(toast_from(n));
+
+    using cheevos::Status;
+    const Status status = cheevos_->status();
+    const bool signed_in = status != Status::Unavailable && status != Status::SignedOut &&
+                           status != Status::SigningIn;
+    // Keep the token from a fresh password sign-in, never the password.
+    if (signed_in && !cheevos_token_saved_) {
+        const cheevos::SavedLogin login{cheevos_->account_name(), cheevos_->token()};
+        if (!login.empty())
+            cheevos_token_saved_ = cheevos::write_saved_login(Storage::writable_directory(), login);
+    }
+
+    // The set is walked to count it, so that happens now and then, and
+    // straight away when something has just happened.
+    if (!notices.empty()) cheevos_refresh_ = 0;
+    if (--cheevos_refresh_ > 0) return;
+    cheevos_refresh_ = 30;
+
+    CheevosView view;
+    view.available = status != Status::Unavailable;
+    view.unavailable = cheevos_->why_unavailable();
+    view.account = signed_in                       ? CheevosView::Account::SignedIn
+                   : status == Status::SigningIn ? CheevosView::Account::SigningIn
+                                                 : CheevosView::Account::SignedOut;
+    if (signed_in) {
+        view.user = cheevos_->display_name();
+        view.score = cheevos_->points();
+    }
+    view.game_loaded = status == Status::Active;
+    std::vector<cheevos::Session::Entry> entries;
+    if (view.game_loaded) {
+        view.game_title = cheevos_->game_name();
+        view.game_badge = cheevos_->game_icon();
+        entries = cheevos_->entries();
+        for (const cheevos::Session::Entry& e : entries) {
+            ++view.total;
+            view.points += e.points;
+            if (e.earned) {
+                ++view.unlocked;
+                view.points_earned += e.points;
+            }
+        }
+    }
+    ui_->set_cheevos_view(view);
+
+    if (ui_->cheevos_list_wanted()) {
+        std::vector<CheevosEntry> list;
+        list.reserve(entries.size());
+        for (const cheevos::Session::Entry& e : entries) {
+            CheevosEntry row;
+            row.title = e.name;
+            row.description = e.description;
+            row.progress = e.progress;
+            row.badge_url = e.earned ? e.badge : e.badge_locked;
+            row.points = e.points;
+            row.percent = e.percent;
+            row.unlocked = e.earned;
+            row.unsupported = e.unsupported;
+            list.push_back(std::move(row));
+        }
+        ui_->set_cheevos_list(std::move(list));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Save states
 // ---------------------------------------------------------------------------
 void App::save_state_slot(int slot) {
@@ -777,6 +920,22 @@ void App::save_state_slot(int slot) {
         ui_->save_state_finished(slot, false,
                                  std::string("Could not save: ") + retro3do_last_error(emu_));
         return;
+    }
+    // Achievement progress rides beside the state (casual mode allows
+    // states, so the set's half-met conditions must travel with them).
+    {
+        const std::vector<uint8_t> progress =
+            cheevos_ ? cheevos_->save_progress() : std::vector<uint8_t>();
+        const std::string rap = progress_path(path);
+        std::error_code ignored;
+        if (!progress.empty()) {
+            if (std::FILE* f = std::fopen(rap.c_str(), "wb")) {
+                std::fwrite(progress.data(), 1, progress.size(), f);
+                std::fclose(f);
+            }
+        } else {
+            std::filesystem::remove(rap, ignored);
+        }
     }
     // What is on screen now is the frame the state was taken after.
     retro3do_frame frame{};
@@ -800,6 +959,19 @@ void App::load_state_slot(int slot) {
         return;
     }
     SDL_Log("Loaded state %d", slot);
+    if (cheevos_) {
+        // Progress from the state, or a clean start: never the progress of
+        // wherever the game was before, which could unlock something falsely.
+        std::vector<uint8_t> progress;
+        if (std::FILE* f = std::fopen(progress_path(path).c_str(), "rb")) {
+            uint8_t chunk[4096];
+            size_t n = 0;
+            while ((n = std::fread(chunk, 1, sizeof chunk, f)) > 0)
+                progress.insert(progress.end(), chunk, chunk + n);
+            std::fclose(f);
+        }
+        if (!cheevos_->restore_progress(progress)) cheevos_->on_machine_reset();
+    }
     ui_->load_state_finished(slot, true, "Loaded slot " + std::to_string(slot) + ".");
 }
 
@@ -873,6 +1045,7 @@ void App::load_settings() {
     touch_->load_layout(*settings_);
     ui_->set_performance_visible(
         settings_->get_bool(settings_key::kPerformanceHud, false));
+    ui_->set_cheevos_toasts(settings_->get_bool(settings_key::kCheevosToasts, true));
     ui_->configure_video(
         renderer_backend_index(settings_->get(settings_key::kRendererBackend, "auto")),
         settings_->get_bool(settings_key::kAspectWidescreen, false),
@@ -1185,6 +1358,7 @@ void App::save_settings() {
     touch_->save_layout(*settings_);
     settings_->set_bool(settings_key::kPerformanceHud,
                         ui_->performance_visible());
+    settings_->set_bool(settings_key::kCheevosToasts, ui_->cheevos_toasts());
     settings_->set(settings_key::kRendererBackend,
                    ui_->renderer_backend() == 1   ? "vulkan"
                    : ui_->renderer_backend() == 2 ? "opengl"
@@ -1593,6 +1767,7 @@ void App::tick() {
     retro3do_stats emu;
     retro3do_get_stats(emu_, &emu);
     refresh_screen_shape();
+    update_cheevos();
     const UiIntent intent =
         ui_->build(emu_, emulating_, smoothed_fps, emu.emulated_fps,
                    emu.frame_ms, emu.audio_underruns, *touch_);
@@ -1625,6 +1800,15 @@ void App::tick() {
                              ui_->bezel(), ui_->crt_effect(), "");
         ui_->set_gpu_driver_status("", "System driver selected - restart to apply");
         save_settings();
+    }
+    if (intent.cheevos_sign_in && cheevos_) {
+        cheevos_token_saved_ = false;
+        cheevos_->sign_in(intent.cheevos_user, intent.cheevos_password);
+    }
+    if (intent.cheevos_sign_out && cheevos_) {
+        cheevos_->sign_out();
+        cheevos::forget_saved_login(Storage::writable_directory());
+        cheevos_token_saved_ = false;
     }
     if (intent.retro_media_login) {
         AndroidStorage::begin_retro_media_login(intent.retro_media_email,
@@ -1676,6 +1860,7 @@ void App::tick() {
         // changes the remembered user BIOS and deliberately runs with no disc.
         retro3do_set_paused(emu_, true);
         retro3do_eject_disc(emu_);
+        if (cheevos_) cheevos_->remove_disc();
         if (retro3do_load_demo(emu_)) {
             retro3do_reset(emu_);
             emulating_ = true;
@@ -1696,6 +1881,8 @@ void App::tick() {
             }
             save_settings();
             selected_disc_ready = true;
+            // A disc swap mid-game keeps the set; a new game loads its own.
+            identify_disc_for_cheevos(!intent.start_disc);
             retro3do_disc_info disc;
             if (retro3do_get_disc_info(emu_, &disc)) {
                 SDL_Log("Disc inserted (%u sectors)", disc.sector_count);
@@ -1706,6 +1893,7 @@ void App::tick() {
         }
     }
     if (intent.eject) {
+        if (cheevos_) cheevos_->remove_disc();
         retro3do_eject_disc(emu_);
         save_state_dir_.clear();
         ui_->set_save_state_dir({});
@@ -1713,6 +1901,7 @@ void App::tick() {
     if (intent.save_state_slot != 0) save_state_slot(intent.save_state_slot);
     if (intent.load_state_slot != 0) load_state_slot(intent.load_state_slot);
     if (intent.reset) {
+        if (cheevos_) cheevos_->on_machine_reset();
         retro3do_request_reset(emu_);
         emulating_ = (retro3do_bios_loaded(emu_) != 0);
         retro3do_set_paused(emu_, !emulating_);

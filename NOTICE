@@ -15,7 +15,7 @@ notices and provenance are recorded in core/NOTICE and core/docs/THIRD_PARTY.md
 The application also contains separately licensed components. Their copyright
 and licence terms remain in force and are collected in the corresponding
 third_party/* licence files. They are SDL3 (zlib), Dear ImGui (MIT),
-AdrenoTools (BSD-2-Clause) and the Roboto typeface carried with Dear ImGui
+rcheevos (MIT, RetroAchievements), AdrenoTools (BSD-2-Clause) and the Roboto typeface carried with Dear ImGui
 (third_party/imgui/misc/fonts, Apache License 2.0), which is compiled in as
 the interface font.
 

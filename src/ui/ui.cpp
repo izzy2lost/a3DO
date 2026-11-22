@@ -615,6 +615,7 @@ void Ui::shutdown() {
     clear_artwork_textures();
     release_cover_textures();
     release_save_slot_textures();
+    badges_.release_textures();
     cover_decoder_.reset();
     release_ui_texture();
     release_logo();
@@ -630,6 +631,7 @@ void Ui::suspend_renderer() {
     release_artwork_textures();
     release_cover_textures();
     release_save_slot_textures();
+    badges_.release_textures();
     release_ui_texture();
     release_logo();
     ImGui_ImplSDLRenderer3_Shutdown();
@@ -971,6 +973,9 @@ UiIntent Ui::build(retro3do_t* emu, bool emulating, double display_fps,
                             intent);
         }
     }
+
+    badges_.pump(renderer_);
+    if (splash_complete_) draw_cheevos_toasts();
 
     touch.set_active(touch_active);
     ImGui::Render();
@@ -2261,6 +2266,10 @@ void Ui::draw_settings(retro3do_t* emu, bool touch_visible, bool touch_editing,
                        cover_index_.size(), cover_index_.size() == 1 ? "" : "s");
     draw_cover_download(intent, std::min(ImGui::GetContentRegionAvail().x, 420.0f * scale_));
     end_panel();
+
+    begin_panel("##cheevos_settings", available_width, true);
+    draw_cheevos_settings(intent, available_width);
+    end_panel();
     ImGui::PopStyleVar();
 }
 
@@ -2674,9 +2683,303 @@ void Ui::draw_about() {
 void Ui::open_quick_menu(bool emulating, UiIntent& intent) {
     quick_menu_ = true;
     save_states_page_ = false;
+    cheevos_page_ = false;
     save_preview_slot_ = 0;
     resume_after_menu_ = emulating;
     if (emulating) intent.toggle_pause = true;
+}
+
+// ---------------------------------------------------------------------------
+// RetroAchievements
+// ---------------------------------------------------------------------------
+void Ui::draw_badge(ImDrawList* draw, const std::string& url, ImVec2 at, float size,
+                    bool grey) {
+    const ImVec2 end(at.x + size, at.y + size);
+    if (SDL_Texture* texture = badges_.get(url)) {
+        draw->AddImageRounded(
+            ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture))), at,
+            end, ImVec2(0, 0), ImVec2(1, 1),
+            grey ? IM_COL32(150, 150, 150, 255) : IM_COL32_WHITE, size * 0.12f);
+        return;
+    }
+    // Still on its way: a plain tile the same size, so nothing jumps.
+    draw->AddRectFilled(at, end, IM_COL32(255, 255, 255, 18), size * 0.12f);
+}
+
+void Ui::push_cheevos_toast(const CheevosToast& toast) {
+    if (!cheevos_toasts_ && toast.kind != CheevosToast::Kind::Problem) return;
+    // A burst (signing in, then the game loading) shows one after another
+    // rather than piling up; the oldest are dropped past a handful.
+    if (cheevos_toasts_queue_.size() >= 6) cheevos_toasts_queue_.pop_front();
+    cheevos_toasts_queue_.push_back(ShownToast{toast, 0});
+}
+
+// Pop-ups along the top edge, clear of the touch controls, over whatever is
+// on screen. They take no input.
+void Ui::draw_cheevos_toasts() {
+    if (cheevos_toasts_queue_.empty()) return;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const u64 now = SDL_GetTicks();
+    const float pad = 10.0f * scale_;
+    const float width = std::min(440.0f * scale_, viewport->WorkSize.x - 24.0f * scale_);
+    float y = viewport->WorkPos.y + 10.0f * scale_;
+    int shown = 0;
+    for (auto it = cheevos_toasts_queue_.begin();
+         it != cheevos_toasts_queue_.end() && shown < 2;) {
+        ShownToast& item = *it;
+        if (item.started_ms == 0) item.started_ms = now;
+        const CheevosToast& t = item.toast;
+        const bool unlock = t.kind == CheevosToast::Kind::Unlock;
+        const u64 duration = unlock ? 5000 : 3500;
+        const u64 age = now - item.started_ms;
+        if (age > duration) {
+            it = cheevos_toasts_queue_.erase(it);
+            continue;
+        }
+        const float fade_in = std::min(1.0f, static_cast<float>(age) / 200.0f);
+        const float fade_out =
+            std::min(1.0f, static_cast<float>(duration - age) / 400.0f);
+        const float alpha = std::min(fade_in, fade_out);
+
+        const float badge = (unlock ? 56.0f : 44.0f) * scale_;
+        const bool has_badge = !t.badge_url.empty();
+        const float text_x = pad + (has_badge ? badge + pad : 0.0f);
+        const float wrap = width - text_x - pad;
+        const float small = ImGui::GetFontSize() * 0.78f;
+        const float body = ImGui::GetFontSize();
+        std::string header;
+        if (unlock) {
+            header = "ACHIEVEMENT UNLOCKED";
+            if (t.points != 0)
+                header += "  -  " + std::to_string(t.points) + (t.points == 1 ? " POINT" : " POINTS");
+        }
+        const float header_h = header.empty() ? 0.0f
+                                              : font->CalcTextSizeA(small, FLT_MAX, 0.0f,
+                                                                    header.c_str()).y + 2.0f * scale_;
+        const float title_h = font->CalcTextSizeA(body, FLT_MAX, wrap, t.text.c_str()).y;
+        const float detail_h = t.detail.empty()
+                                   ? 0.0f
+                                   : font->CalcTextSizeA(small, FLT_MAX, wrap, t.detail.c_str()).y +
+                                         2.0f * scale_;
+        const float height =
+            std::max(has_badge ? badge : 0.0f, header_h + title_h + detail_h) + pad * 2.0f;
+
+        const float slide = (1.0f - fade_in) * -12.0f * scale_;
+        const ImVec2 min(viewport->WorkPos.x + (viewport->WorkSize.x - width) * 0.5f, y + slide);
+        const ImVec2 max(min.x + width, min.y + height);
+        const ImVec4 accent = unlock ? kGold
+                              : t.kind == CheevosToast::Kind::Problem ? kError
+                                                                      : kBlue;
+        const auto faded = [&](ImU32 c) {
+            const int a = static_cast<int>(((c >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+            return (c & ~IM_COL32_A_MASK) | (static_cast<ImU32>(a) << IM_COL32_A_SHIFT);
+        };
+        draw->AddRectFilled(ImVec2(min.x + 2.0f * scale_, min.y + 4.0f * scale_),
+                            ImVec2(max.x + 2.0f * scale_, max.y + 4.0f * scale_),
+                            faded(IM_COL32(0, 0, 0, 120)), 12.0f * scale_);
+        draw->AddRectFilled(min, max, faded(IM_COL32(18, 18, 24, 242)), 12.0f * scale_);
+        draw->AddRect(min, max, faded(colour(accent)), 12.0f * scale_, 0,
+                      std::max(1.0f, 1.5f * scale_));
+        if (has_badge) {
+            const ImVec2 at(min.x + pad, min.y + (height - badge) * 0.5f);
+            if (SDL_Texture* texture = badges_.get(t.badge_url)) {
+                draw->AddImageRounded(
+                    ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture))),
+                    at, ImVec2(at.x + badge, at.y + badge), ImVec2(0, 0), ImVec2(1, 1),
+                    faded(IM_COL32_WHITE), badge * 0.12f);
+            } else {
+                draw->AddRectFilled(at, ImVec2(at.x + badge, at.y + badge),
+                                    faded(IM_COL32(255, 255, 255, 18)), badge * 0.12f);
+            }
+        }
+        float text_y = min.y + (height - (header_h + title_h + detail_h)) * 0.5f;
+        if (!header.empty()) {
+            draw->AddText(font, small, ImVec2(min.x + text_x, text_y), faded(colour(kGold)),
+                          header.c_str());
+            text_y += header_h;
+        }
+        draw->AddText(font, body, ImVec2(min.x + text_x, text_y), faded(colour(kText)),
+                      t.text.c_str(), nullptr, wrap);
+        text_y += title_h + 2.0f * scale_;
+        if (!t.detail.empty()) {
+            draw->AddText(font, small, ImVec2(min.x + text_x, text_y), faded(colour(kMuted)),
+                          t.detail.c_str(), nullptr, wrap);
+        }
+        y = max.y + 8.0f * scale_;
+        ++shown;
+        ++it;
+    }
+}
+
+void Ui::draw_cheevos_settings(UiIntent& intent, float width) {
+    (void)width;
+    ImGui::TextColored(kGold, "RETROACHIEVEMENTS");
+    if (!cheevos_.available) {
+        ImGui::TextColored(kMuted, "Not available on this device%s%s.",
+                           cheevos_.unavailable.empty() ? "" : ": ",
+                           cheevos_.unavailable.c_str());
+        return;
+    }
+    if (cheevos_.account == CheevosView::Account::SignedIn) {
+        ImGui::TextColored(kText, "Signed in as %s", cheevos_.user.c_str());
+        ImGui::TextColored(kMuted, "%u point%s in casual mode", cheevos_.score,
+                           cheevos_.score == 1 ? "" : "s");
+        if (ImGui::Button("SIGN OUT", ImVec2(150.0f * scale_, 0.0f))) intent.cheevos_sign_out = true;
+        if (ImGui::Checkbox("Show a pop-up when you earn one", &cheevos_toasts_))
+            intent.ui_settings_changed = true;
+        ImGui::TextColored(kMuted,
+                           "Casual mode, so save states stay available. Open the game menu "
+                           "while playing to see a game's achievements.");
+        return;
+    }
+
+    ImGui::TextColored(kMuted,
+                       "Sign in with your retroachievements.org account to earn achievements "
+                       "in 3DO games. Only a sign-in token is kept on this device.");
+    const bool busy = cheevos_.account == CheevosView::Account::SigningIn;
+    const float field = std::min(ImGui::GetContentRegionAvail().x, 360.0f * scale_);
+    ImGui::BeginDisabled(busy);
+    ImGui::SetNextItemWidth(field);
+    // Enter on the keyboard moves on to the password: on a phone the
+    // keyboard covers the field below, so it could not be tapped.
+    const bool user_done = ImGui::InputTextWithHint(
+        "##ra_user", "Username", cheevos_user_buffer_, sizeof(cheevos_user_buffer_),
+        ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue);
+    if (user_done) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(field);
+    const bool entered = ImGui::InputTextWithHint(
+        "##ra_password", "Password", cheevos_password_buffer_,
+        sizeof(cheevos_password_buffer_),
+        ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool ready = cheevos_user_buffer_[0] != '\0' && cheevos_password_buffer_[0] != '\0';
+    ImGui::BeginDisabled(!ready);
+    if ((ImGui::Button("SIGN IN", ImVec2(150.0f * scale_, 0.0f)) || entered) && ready) {
+        intent.cheevos_sign_in = true;
+        intent.cheevos_user = cheevos_user_buffer_;
+        intent.cheevos_password = cheevos_password_buffer_;
+        std::memset(cheevos_password_buffer_, 0, sizeof(cheevos_password_buffer_));
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    if (busy) {
+        ImGui::SameLine();
+        ImGui::TextColored(kMuted, "Signing in...");
+    }
+}
+
+void Ui::draw_cheevos_page() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                  viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    const float menu_width = std::min(560.0f * scale_, viewport->WorkSize.x * 0.92f);
+    ImGui::SetNextWindowSize(ImVec2(menu_width, viewport->WorkSize.y * 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale_);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::Begin("##cheevos", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar(2);
+
+    if (ImGui::Button("< BACK", ImVec2(0.0f, 36.0f * scale_))) cheevos_page_ = false;
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f * scale_);
+    ImGui::SetWindowFontScale(1.4f);
+    ImGui::TextColored(kText, "ACHIEVEMENTS");
+    ImGui::SetWindowFontScale(1.0f);
+
+    // The game, and how far through its set the player is.
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    {
+        const float icon = 52.0f * scale_;
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        draw_badge(draw, cheevos_.game_badge, at, icon, false);
+        ImGui::SetCursorScreenPos(ImVec2(at.x + icon + 12.0f * scale_, at.y));
+        ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(kText, "%s", cheevos_.game_title.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TextColored(kMuted, "%u of %u earned  -  %u of %u points", cheevos_.unlocked,
+                           cheevos_.total, cheevos_.points_earned, cheevos_.points);
+        const float bar_w = ImGui::GetContentRegionAvail().x;
+        const ImVec2 bar = ImGui::GetCursorScreenPos();
+        const float share = cheevos_.total ? static_cast<float>(cheevos_.unlocked) / cheevos_.total
+                                           : 0.0f;
+        draw->AddRectFilled(bar, ImVec2(bar.x + bar_w, bar.y + 6.0f * scale_),
+                            IM_COL32(255, 255, 255, 25), 3.0f * scale_);
+        draw->AddRectFilled(bar, ImVec2(bar.x + bar_w * share, bar.y + 6.0f * scale_),
+                            colour(kGold), 3.0f * scale_);
+        ImGui::Dummy(ImVec2(bar_w, 6.0f * scale_));
+        ImGui::EndGroup();
+        ImGui::SetCursorScreenPos(
+            ImVec2(at.x, std::max(ImGui::GetCursorScreenPos().y, at.y + icon) + 6.0f * scale_));
+    }
+    tricolour_rule(ImGui::GetContentRegionAvail().x, 3.0f * scale_);
+
+    ImGui::BeginChild("##cheevos_list", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
+    draw = ImGui::GetWindowDrawList();
+    const float badge = 56.0f * scale_;
+    const float pad = 8.0f * scale_;
+    if (cheevos_list_.empty()) ImGui::TextColored(kMuted, "Loading...");
+    for (size_t i = 0; i < cheevos_list_.size(); ++i) {
+        const CheevosEntry& a = cheevos_list_[i];
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 row = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        draw->ChannelsSplit(2);
+        draw->ChannelsSetCurrent(1);
+
+        draw_badge(draw, a.badge_url, ImVec2(row.x + pad, row.y + pad), badge, !a.unlocked);
+        const std::string points = std::to_string(a.points) + (a.points == 1 ? " pt" : " pts");
+        const float points_w = ImGui::CalcTextSize(points.c_str()).x;
+        draw->AddText(ImVec2(row.x + width - pad - points_w, row.y + pad),
+                      colour(a.unlocked ? kGold : kMuted), points.c_str());
+
+        const float text_x = row.x + pad * 2.0f + badge;
+        ImGui::SetCursorScreenPos(ImVec2(text_x, row.y + pad));
+        ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(row.x + width - pad * 2.0f - points_w);
+        ImGui::TextColored(a.unlocked ? kText : ImVec4(0.80f, 0.80f, 0.85f, 1.0f), "%s",
+                           a.title.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PushTextWrapPos(row.x + width - pad);
+        ImGui::TextColored(kMuted, "%s", a.description.c_str());
+        ImGui::PopTextWrapPos();
+        if (a.unlocked) {
+            ImGui::TextColored(kGreen, "Earned");
+        } else if (a.unsupported) {
+            ImGui::TextColored(kAmber, "Not supported by this emulator yet");
+        } else if (!a.progress.empty()) {
+            const float bar_w = std::min(180.0f * scale_, row.x + width - pad - text_x);
+            const ImVec2 bar = ImGui::GetCursorScreenPos();
+            const float y = bar.y + ImGui::GetTextLineHeight() * 0.5f - 3.0f * scale_;
+            draw->AddRectFilled(ImVec2(bar.x, y), ImVec2(bar.x + bar_w, y + 6.0f * scale_),
+                                IM_COL32(255, 255, 255, 25), 3.0f * scale_);
+            draw->AddRectFilled(ImVec2(bar.x, y),
+                                ImVec2(bar.x + bar_w * std::clamp(a.percent / 100.0f, 0.0f, 1.0f),
+                                       y + 6.0f * scale_),
+                                colour(kBlue), 3.0f * scale_);
+            ImGui::Dummy(ImVec2(bar_w, ImGui::GetTextLineHeight()));
+            ImGui::SameLine();
+            ImGui::TextColored(kMuted, "%s", a.progress.c_str());
+        }
+        ImGui::EndGroup();
+        const float bottom = std::max(ImGui::GetItemRectMax().y, row.y + badge + pad) + pad;
+
+        draw->ChannelsSetCurrent(0);
+        draw->AddRectFilled(row, ImVec2(row.x + width, bottom),
+                            a.unlocked ? IM_COL32(255, 200, 80, 16) : IM_COL32(255, 255, 255, 8),
+                            10.0f * scale_);
+        draw->ChannelsMerge();
+        ImGui::SetCursorScreenPos(ImVec2(row.x, bottom + 6.0f * scale_));
+        ImGui::Dummy(ImVec2(width, 0.0f));
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 // ---------------------------------------------------------------------------
@@ -3012,6 +3315,10 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         draw_save_states(intent);
         return;
     }
+    if (cheevos_page_) {
+        draw_cheevos_page();
+        return;
+    }
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
@@ -3050,6 +3357,11 @@ void Ui::draw_quick_menu(retro3do_t* emu, bool emulating, bool touch_visible,
         save_confirm_slot_ = 0;
     }
     ImGui::EndDisabled();
+    if (cheevos_.game_loaded) {
+        const std::string label = "ACHIEVEMENTS  " + std::to_string(cheevos_.unlocked) +
+                                  " / " + std::to_string(cheevos_.total);
+        if (wide_button(label.c_str(), 42.0f * scale_)) cheevos_page_ = true;
+    }
 
     ImGui::Spacing();
     ImGui::TextColored(kGold, "ON-SCREEN CONTROLLER");

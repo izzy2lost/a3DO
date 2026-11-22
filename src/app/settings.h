@@ -62,6 +62,7 @@ constexpr const char* kRegion = "machine.region";
 constexpr const char* kCpuScale = "machine.cpu_scale_percent";
 constexpr const char* kTouchControls = "input.touch_controls";
 constexpr const char* kPerformanceHud = "ui.performance_hud";
+constexpr const char* kCheevosToasts = "cheevos.toasts";
 constexpr const char* kRendererBackend = "video.renderer";
 constexpr const char* kAspectWidescreen = "video.aspect_widescreen";
 constexpr const char* kBezel = "video.bezel";

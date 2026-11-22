@@ -28,6 +28,7 @@ namespace retro3do {
 
 class Ui;
 class Settings;
+namespace cheevos { class Session; }
 class TouchPad;
 
 class App {
@@ -121,6 +122,12 @@ private:
     void save_state_slot(int slot);
     void load_state_slot(int slot);
     void present();
+    // RetroAchievements: bring the session up and sign in with the kept
+    // token; identify the disc in the drive (a swap keeps the game loaded);
+    // and each frame hand the UI its status, list and pop-ups.
+    void start_cheevos();
+    void identify_disc_for_cheevos(bool swap);
+    void update_cheevos();
     void update_gesture_exclusion();
     void refresh_screen_shape();
     void ensure_frame_texture(int width, int height);
@@ -144,6 +151,9 @@ private:
     std::unique_ptr<Settings> settings_;
     std::unique_ptr<TouchPad> touch_;
     std::unique_ptr<CoverDownloader> cover_download_;
+    std::unique_ptr<cheevos::Session> cheevos_;
+    bool cheevos_token_saved_ = false;   // this sign-in's token is on disk
+    int cheevos_refresh_ = 0;            // frames until the summary is re-read
     int covers_shown_ = 0;   // fetched covers already passed to the UI
 
     SDL_AudioStream* audio_stream_ = nullptr;

@@ -167,6 +167,40 @@ embed_binary(${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/a3do-logo-ui.png
     ${CMAKE_CURRENT_BINARY_DIR}/generated/a3do_logo_png.cpp kA3doLogoPng)
 
 # ---------------------------------------------------------------------------
+# RetroAchievements: rcheevos (MIT, vendored from upstream) and the session
+# around it. Casual mode; the disc hash is computed over the core's own sector
+# reader, so none of rcheevos' CD-image readers are built.
+# ---------------------------------------------------------------------------
+set(RC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rcheevos)
+file(GLOB RC_RUNTIME_SOURCES ${RC_DIR}/src/rcheevos/*.c)
+file(GLOB RC_API_SOURCES ${RC_DIR}/src/rapi/*.c)
+add_library(retro3do_cheevos STATIC
+    src/cheevos/cheevos_client.cpp
+    src/cheevos/cheevos_hash.cpp
+    src/cheevos/cheevos_http.cpp
+    ${RC_DIR}/src/rc_client.c
+    ${RC_DIR}/src/rc_util.c
+    ${RC_DIR}/src/rc_compat.c
+    ${RC_DIR}/src/rc_version.c
+    ${RC_API_SOURCES}
+    ${RC_RUNTIME_SOURCES}
+    ${RC_DIR}/src/rhash/md5.c)
+target_include_directories(retro3do_cheevos
+    PUBLIC src
+    PRIVATE ${RC_DIR}/include ${RC_DIR}/src ${RC_DIR}/src/rapi ${RC_DIR}/src/rhash)
+target_compile_definitions(retro3do_cheevos PRIVATE RC_DISABLE_LUA)
+# The version a3DO reports to RetroAchievements, from the Android build.
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/android/app/build.gradle A3DO_VERSION_LINE
+     REGEX "versionName")
+string(REGEX MATCH "[0-9]+(\\.[0-9]+)+" A3DO_VERSION "${A3DO_VERSION_LINE}")
+if(NOT A3DO_VERSION)
+    set(A3DO_VERSION "2.0")
+endif()
+target_compile_definitions(retro3do_cheevos PRIVATE A3DO_CHEEVOS_VERSION="${A3DO_VERSION}")
+target_link_libraries(retro3do_cheevos PUBLIC retro3do_core ${RETRO3DO_SDL_TARGET}
+                      ${CMAKE_DL_LIBS})
+
+# ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
 set(RETRO3DO_APP_SOURCES
@@ -183,6 +217,7 @@ set(RETRO3DO_APP_SOURCES
     src/ui/ui.cpp
     src/ui/game_library.cpp
     src/ui/cover_art.cpp
+    src/ui/badge_cache.cpp
     src/ui/file_browser.cpp
     src/ui/touch_pad.cpp
     src/ui/retro_touch_pad.cpp
@@ -210,7 +245,7 @@ else()
 endif()
 
 find_package(Threads REQUIRED)
-target_link_libraries(retro3do PRIVATE retro3do_core imgui ${RETRO3DO_SDL_TARGET} Threads::Threads)
+target_link_libraries(retro3do PRIVATE retro3do_core retro3do_cheevos imgui ${RETRO3DO_SDL_TARGET} Threads::Threads)
 target_include_directories(retro3do PRIVATE src third_party/stb)
 # JPEG decoding is the one hot loop in the UI. Debug builds (including the
 # Android debug APK) would otherwise decode a cover several times slower.
@@ -339,6 +374,7 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         tests/test_path.cpp
         tests/test_settings.cpp
         tests/test_save_slots.cpp
+        tests/test_cheevos.cpp
     )
     target_sources(retro3do_tests PRIVATE
         src/app/save_slots.cpp
@@ -348,11 +384,11 @@ if(RETRO3DO_BUILD_TESTS AND NOT IOS)
         src/ui/game_library.cpp
         src/ui/cover_art.cpp
         src/app/cover_download.cpp)
-    target_link_libraries(retro3do_tests PRIVATE retro3do_core ${RETRO3DO_SDL_TARGET})
+    target_link_libraries(retro3do_tests PRIVATE retro3do_core retro3do_cheevos ${RETRO3DO_SDL_TARGET})
     target_include_directories(retro3do_tests PRIVATE third_party/stb)
     find_package(Threads REQUIRED)
     target_link_libraries(retro3do_tests PRIVATE Threads::Threads)
-    target_include_directories(retro3do_tests PRIVATE src tests)
+    target_include_directories(retro3do_tests PRIVATE src tests ${RC_DIR}/src/rhash)
     add_test(NAME retro3do_tests COMMAND retro3do_tests)
 
     add_executable(retro3do_touch_tests

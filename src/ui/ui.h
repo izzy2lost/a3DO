@@ -1,6 +1,7 @@
 // a3DO front end: splash, library, settings and in-game quick menu.
 #pragma once
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -11,6 +12,7 @@
 #include "ui/file_browser.h"
 #include "ui/cover_art.h"
 #include "ui/game_library.h"
+#include "ui/badge_cache.h"
 #include <imgui.h>
 
 struct ImGuiStyle;
@@ -25,6 +27,32 @@ namespace retro3do {
 struct RetroMediaArtwork;
 struct RetroMediaGame;
 class TouchPad;
+
+// RetroAchievements as the UI shows it. The application fills these from the
+// achievements session, so the UI never touches the network or rcheevos.
+struct CheevosView {
+    bool available = false;        // a transport exists on this device
+    std::string unavailable;       // why not, when it does not
+    enum class Account { SignedOut, SigningIn, SignedIn } account = Account::SignedOut;
+    std::string user;
+    unsigned score = 0;
+    bool game_loaded = false;      // a set is being checked
+    std::string game_title, game_badge;
+    std::string game_note;         // e.g. no set for this disc
+    unsigned total = 0, unlocked = 0, points = 0, points_earned = 0;
+};
+struct CheevosEntry {
+    std::string title, description, progress, badge_url;
+    unsigned points = 0;
+    float percent = 0.0f;
+    bool unlocked = false;
+    bool unsupported = false;
+};
+struct CheevosToast {
+    enum class Kind { Unlock, Info, Problem } kind = Kind::Info;
+    std::string text, detail, badge_url;
+    unsigned points = 0;
+};
 
 // What the UI asks the application to do. It is consumed once per display
 // frame, keeping storage and machine mutations out of the drawing code.
@@ -73,6 +101,10 @@ struct UiIntent {
     std::string retro_media_slug;
     std::string folder_path;
     std::string folder_name;
+    bool cheevos_sign_in = false;
+    bool cheevos_sign_out = false;
+    std::string cheevos_user;
+    std::string cheevos_password;
     int save_state_slot = 0;   // 1..10: save the running game there
     int load_state_slot = 0;   // 1..10: put the running game back from there
 };
@@ -115,6 +147,15 @@ public:
     // treats a camera hole as a strip the full length of its edge.
     void set_screen_shape(const ImVec4& bars, const std::vector<ImVec4>& holes);
     void save_state_finished(int slot, bool ok, const std::string& message);
+    // RetroAchievements: account and game status every frame, the list when
+    // the achievements page is open (cheevos_list_wanted), and pop-ups.
+    void set_cheevos_view(const CheevosView& view) { cheevos_ = view; }
+    void set_cheevos_list(std::vector<CheevosEntry> list) { cheevos_list_ = std::move(list); }
+    bool cheevos_list_wanted() const { return quick_menu_ && cheevos_page_; }
+    void push_cheevos_toast(const CheevosToast& toast);
+    void set_cheevos_badge_directory(const std::string& dir) { badges_.set_directory(dir); }
+    bool cheevos_toasts() const { return cheevos_toasts_; }
+    void set_cheevos_toasts(bool on) { cheevos_toasts_ = on; }
     void load_state_finished(int slot, bool ok, const std::string& message);
     void set_performance_visible(bool visible) { performance_visible_ = visible; }
     bool performance_visible() const { return performance_visible_; }
@@ -196,6 +237,11 @@ private:
                          bool touch_editing, UiIntent& intent);
     void open_quick_menu(bool emulating, UiIntent& intent);
     void draw_save_states(UiIntent& intent);
+    void draw_cheevos_settings(UiIntent& intent, float width);
+    void draw_cheevos_page();
+    void draw_cheevos_toasts();
+    void draw_badge(ImDrawList* draw, const std::string& url, ImVec2 at, float size,
+                    bool grey);
     void refresh_save_slots();
     void release_save_slot_textures();
     void wake_menu_button();
@@ -329,6 +375,19 @@ private:
         float angle = 0.0f;           // radians, 0 = front, pi = back
     };
     std::unordered_map<std::string, GridFlip> grid_flips_;
+    // RetroAchievements.
+    CheevosView cheevos_;
+    std::vector<CheevosEntry> cheevos_list_;
+    struct ShownToast {
+        CheevosToast toast;
+        u64 started_ms = 0;
+    };
+    std::deque<ShownToast> cheevos_toasts_queue_;
+    bool cheevos_toasts_ = true;
+    bool cheevos_page_ = false;
+    char cheevos_user_buffer_[96] = {};
+    char cheevos_password_buffer_[128] = {};
+    BadgeCache badges_;
     std::string retro_media_type_ = "box2d";
     std::string retro_media_email_;
     std::string retro_media_message_ = "Not signed in";
