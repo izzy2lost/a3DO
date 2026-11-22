@@ -356,6 +356,19 @@ bool App::lifecycle_event_watch(void* userdata, SDL_Event* event) {
     return true;
 }
 
+void App::refresh_screen_shape() {
+    if (!screen_shape_stale_ || !AndroidStorage::available()) return;
+    screen_shape_stale_ = false;
+    const std::vector<int> shape = AndroidStorage::screen_shape();
+    if (shape.size() < 4) return;
+    const float density = std::max(1.0f, SDL_GetWindowPixelDensity(window_));
+    const auto pt = [&](size_t i) { return static_cast<float>(shape[i]) / density; };
+    std::vector<ImVec4> holes;
+    for (size_t i = 4; i + 3 < shape.size(); i += 4)
+        holes.emplace_back(pt(i), pt(i + 1), pt(i + 2), pt(i + 3));
+    ui_->set_screen_shape(ImVec4(pt(0), pt(1), pt(2), pt(3)), holes);
+}
+
 // Edge to edge, the touch controls reach into the side edges where Android
 // listens for its back and bar-reveal swipes. Those swipes start where the
 // controls are, so the controls' boxes (with a little slack) are handed to
@@ -479,6 +492,11 @@ void App::handle_events() {
         switch (event.type) {
             case SDL_EVENT_QUIT:
                 running_ = false;
+                break;
+            case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+            case SDL_EVENT_WINDOW_RESIZED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                screen_shape_stale_ = true;
                 break;
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 if (event.window.windowID == SDL_GetWindowID(window_)) {
@@ -1574,6 +1592,7 @@ void App::tick() {
     // a machine running at half speed behind a perfectly smooth window.
     retro3do_stats emu;
     retro3do_get_stats(emu_, &emu);
+    refresh_screen_shape();
     const UiIntent intent =
         ui_->build(emu_, emulating_, smoothed_fps, emu.emulated_fps,
                    emu.frame_ms, emu.audio_underruns, *touch_);

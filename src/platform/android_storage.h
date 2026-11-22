@@ -137,6 +137,10 @@ public:
     // and slides inward is taken as a system gesture and pulls the bars
     // in. Rectangles are in pixels as {x, y, w, h} quadruples.
     static void set_gesture_exclusion(const std::vector<int>& rects);
+
+    // The system bars' insets (left, top, right, bottom) then x, y, w, h for
+    // each display cutout's exact box, in pixels. Empty off Android.
+    static std::vector<int> screen_shape();
 };
 
 }  // namespace retro3do

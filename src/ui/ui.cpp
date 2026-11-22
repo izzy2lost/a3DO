@@ -764,6 +764,91 @@ void Ui::apply_safe_area() {
 }
 
 
+void Ui::set_screen_shape(const ImVec4& bars, const std::vector<ImVec4>& holes) {
+    have_screen_shape_ = true;
+    screen_bars_ = bars;
+    screen_holes_ = holes;
+}
+
+// Where the menus go: the whole screen less the system bars, and less a
+// camera hole only where a control would sit under it.
+//
+// Android's cutout inset is a strip the full length of one edge, but a hole
+// is a small circle in it. Held upright, a centred hole sits between the logo
+// and the RESUME/EXIT buttons, where the header has nothing; held sideways it
+// sits halfway down a side, beside the box art. Keeping a whole strip clear
+// for it left a band of empty screen across the top, or down one side.
+void Ui::launcher_area(ImVec2* pos, ImVec2* size) const {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (!have_screen_shape_) {
+        *pos = viewport->WorkPos;
+        *size = viewport->WorkSize;
+        return;
+    }
+    const float vx = viewport->Pos.x, vy = viewport->Pos.y;
+    const float vw = viewport->Size.x, vh = viewport->Size.y;
+    const ImVec2 pad = ImGui::GetStyle().WindowPadding;
+    const float clear = 6.0f * scale_;   // daylight between a control and a hole
+    float left = screen_bars_.x, top = screen_bars_.y;
+    float right = screen_bars_.z, bottom = screen_bars_.w;
+
+    enum Edge { kLeft, kTop, kRight, kBottom };
+    const auto edge_of = [&](const ImVec4& h) {
+        const float d[4] = {h.x - vx, h.y - vy, vx + vw - (h.x + h.z), vy + vh - (h.y + h.w)};
+        int best = 0;
+        for (int i = 1; i < 4; ++i)
+            if (d[i] < d[best]) best = i;
+        return static_cast<Edge>(best);
+    };
+
+    // The top first, since the header's height then places the side checks.
+    // These mirror draw_launcher's header: wordmark at the left, then either
+    // everything on one row (wide) or RESUME/EXIT at the right of the first
+    // row and the page tabs on a second (narrow).
+    const bool tall = vh >= vw || vh >= 520.0f * scale_;
+    const float mark_size = (tall ? 50.0f : 34.0f) * scale_;
+    const float mark_width = wordmark_width(mark_size) + 14.0f * scale_;
+    const float row_h = std::max((tall ? 34.0f : 30.0f) * scale_, mark_size);
+    const int pages = 4 + (retro_media_admin_ ? 1 : 0);
+    const int actions = (RETRO3DO_PLATFORM_IOS ? 0 : 1) + (session_available_ ? 1 : 0);
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float inner_w = vw - left - right - pad.x * 2.0f;
+    const bool narrow = inner_w < mark_width + (pages + actions) * (92.0f * scale_ + gap);
+    for (const ImVec4& h : screen_holes_) {
+        if (edge_of(h) != kTop) continue;
+        const float row_top = vy + top + pad.y;
+        const float x0 = vx + left + pad.x;
+        const float x1 = vx + vw - right - pad.x;
+        const float free_from = x0 + mark_width;
+        const float free_to = x1 - actions * 78.0f * scale_ - std::max(0, actions - 1) * gap;
+        const bool clear_of_header =
+            narrow && h.x >= free_from + clear && h.x + h.z <= free_to - clear &&
+            h.y + h.w <= row_top + row_h + ImGui::GetStyle().ItemSpacing.y - clear;
+        if (!clear_of_header) top = std::max(top, h.y + h.w - vy + clear - pad.y);
+    }
+
+    // A side hole matters beside the header and search rows, or beside the
+    // bottom row of buttons; halfway down it is beside the games, which may
+    // pass under it.
+    const float header_h = (narrow ? row_h * 2.0f : row_h) + 110.0f * scale_;
+    const float band_top_end = vy + top + pad.y + header_h;
+    const float band_bottom_start = vy + vh - bottom - pad.y - 64.0f * scale_;
+    for (const ImVec4& h : screen_holes_) {
+        const Edge e = edge_of(h);
+        if (e == kBottom) {
+            bottom = std::max(bottom, vy + vh - h.y + clear - pad.y);
+            continue;
+        }
+        if (e == kTop) continue;
+        const bool beside_controls = h.y < band_top_end || h.y + h.w > band_bottom_start;
+        if (!beside_controls) continue;
+        if (e == kLeft) left = std::max(left, h.x + h.z - vx + clear - pad.x);
+        else right = std::max(right, vx + vw - h.x + clear - pad.x);
+    }
+    *pos = ImVec2(vx + left, vy + top);
+    *size = ImVec2(vw - left - right, vh - top - bottom);
+}
+
 void Ui::touch_area(ImVec2* pos, ImVec2* size) const {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     *pos = viewport->WorkPos;
@@ -1030,10 +1115,11 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         ImGui::GetColorU32(ImGuiCol_WindowBg));
     // A phone held sideways has a few hundred points of height for everything;
     // the header gives up what it can so the library keeps the rest.
-    compact_ = viewport->WorkSize.x > viewport->WorkSize.y &&
-               viewport->WorkSize.y < 520.0f * scale_;
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImVec2 area_pos, area_size;
+    launcher_area(&area_pos, &area_size);
+    compact_ = area_size.x > area_size.y && area_size.y < 520.0f * scale_;
+    ImGui::SetNextWindowPos(area_pos);
+    ImGui::SetNextWindowSize(area_size);
     if (compact_) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
                             ImVec2(ImGui::GetStyle().WindowPadding.x, 6.0f * scale_));

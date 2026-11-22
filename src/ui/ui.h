@@ -11,6 +11,7 @@
 #include "ui/file_browser.h"
 #include "ui/cover_art.h"
 #include "ui/game_library.h"
+#include <imgui.h>
 
 struct ImGuiStyle;
 struct ImVec2;
@@ -108,6 +109,11 @@ public:
     // Save states: the folder holding the running game's ten slots (empty
     // with no game), and what became of a save or load the menu asked for.
     void set_save_state_dir(const std::string& dir);
+    // The screen's real shape, in window points: the system bars' insets
+    // (x left, y top, z right, w bottom) and each display cutout's exact box
+    // (x, y, w, h). Without it the menus keep to SDL's safe area, which
+    // treats a camera hole as a strip the full length of its edge.
+    void set_screen_shape(const ImVec4& bars, const std::vector<ImVec4>& holes);
     void save_state_finished(int slot, bool ok, const std::string& message);
     void load_state_finished(int slot, bool ok, const std::string& message);
     void set_performance_visible(bool visible) { performance_visible_ = visible; }
@@ -133,6 +139,7 @@ public:
     // Where the touch controls go: the whole screen in landscape, the space
     // under the picture in portrait.
     void touch_area(ImVec2* pos, ImVec2* size) const;
+    void launcher_area(ImVec2* pos, ImVec2* size) const;
     bool crt_effect() const { return crt_effect_; }
     const std::string& gpu_driver_name() const { return gpu_driver_name_; }
     const std::string& retro_media_type() const { return retro_media_type_; }
@@ -214,6 +221,9 @@ private:
     std::string save_state_dir_;
     SaveSlot save_slots_[10];
     bool save_states_page_ = false;
+    bool have_screen_shape_ = false;
+    ImVec4 screen_bars_{0, 0, 0, 0};
+    std::vector<ImVec4> screen_holes_;
     bool compact_ = false;           // short landscape screen: slimmer header
     bool save_slots_stale_ = true;
     int save_state_busy_ = 0;        // slot waiting on the app, 0 for none

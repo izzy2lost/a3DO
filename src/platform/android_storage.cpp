@@ -449,6 +449,31 @@ void AndroidStorage::set_gesture_exclusion(const std::vector<int>& rects) {
     e->DeleteLocalRef(cls);
 }
 
+std::vector<int> AndroidStorage::screen_shape() {
+    std::vector<int> out;
+    JNIEnv* e = env();
+    if (e == nullptr) return out;
+    jclass cls = activity_class(e);
+    if (cls == nullptr) {
+        clear_pending_exception(e);
+        return out;
+    }
+    jmethodID method = e->GetStaticMethodID(cls, "nativeScreenShape", "()[I");
+    if (method != nullptr) {
+        auto array = static_cast<jintArray>(e->CallStaticObjectMethod(cls, method));
+        if (array != nullptr) {
+            out.resize(static_cast<size_t>(e->GetArrayLength(array)));
+            if (!out.empty())
+                e->GetIntArrayRegion(array, 0, static_cast<jsize>(out.size()),
+                                     reinterpret_cast<jint*>(out.data()));
+            e->DeleteLocalRef(array);
+        }
+    }
+    clear_pending_exception(e);
+    e->DeleteLocalRef(cls);
+    return out;
+}
+
 }  // namespace retro3do
 
 #else  // not Android
@@ -482,6 +507,7 @@ std::vector<RetroMediaArtwork> AndroidStorage::retro_media_artwork(
     const std::string&) { return {}; }
 std::string AndroidStorage::retro_media_saved_email() { return {}; }
 void AndroidStorage::set_gesture_exclusion(const std::vector<int>&) {}
+std::vector<int> AndroidStorage::screen_shape() { return {}; }
 
 }  // namespace retro3do
 

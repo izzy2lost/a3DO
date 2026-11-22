@@ -232,6 +232,11 @@ public class A3DOActivity extends SDLActivity {
      * at most 200dp of each side edge, which covers the D-pad and the face
      * buttons, the controls a thumb slides on.
      */
+    /** See A3DOSurface.screenShape. Empty before the first layout. */
+    public static int[] nativeScreenShape() {
+        return A3DOSurface.screenShape;
+    }
+
     public static void nativeSetGestureExclusion(final int[] rects) {
         final A3DOActivity self = instance;
         if (self == null || Build.VERSION.SDK_INT < 29 /* Android 10 */) return;

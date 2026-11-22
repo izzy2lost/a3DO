@@ -122,6 +122,7 @@ private:
     void load_state_slot(int slot);
     void present();
     void update_gesture_exclusion();
+    void refresh_screen_shape();
     void ensure_frame_texture(int width, int height);
     void suspend_renderer();
     bool resume_renderer();
@@ -180,6 +181,9 @@ private:
     // The touch controls' boxes as last handed to Android, in pixels, so the
     // system is only told again when they move.
     std::vector<int> gesture_exclusion_;
+    // Set when the window or its insets change; the cutout's exact shape is
+    // then fetched again for the menus (Ui::set_screen_shape).
+    bool screen_shape_stale_ = true;
 
     SelfTestResult selftest_;
 
