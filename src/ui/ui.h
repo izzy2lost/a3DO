@@ -171,6 +171,11 @@ private:
                        bool touch_editing, UiIntent& intent);
     void draw_library(retro3do_t* emu, UiIntent& intent);
     void draw_cover_download(UiIntent& intent, float width);
+    struct CoverTexture;
+    // A grid card's box art, fitted into the area at `pos`, `size`. A tap
+    // turns it over to show the back; another tap turns it back.
+    void draw_grid_cover(ImDrawList* draw, const CoverTexture& cover,
+                         const std::string& key, ImVec2 pos, ImVec2 size);
     void draw_cover_flow(retro3do_t* emu,
                          const std::vector<const LibraryGame*>& games,
                          UiIntent& intent);
@@ -208,6 +213,7 @@ private:
         float front_aspect = 0.705f;
         float back_aspect = 0.705f;
         float spine_aspect = 0.0f;    // width / height; 0 without a spine
+        float front_banner = 0.0f;    // see CoverImage::front_banner
         bool requested = false;
         bool failed = false;
         u64 last_used = 0;
@@ -310,6 +316,13 @@ private:
     int flip_index_ = -1;             // the cover that is turned or turning
     bool flipped_ = false;            // want the back of flip_index_ showing
     float flip_angle_ = 0.0f;         // radians, 0 = front, pi = back
+    // Grid cards turned over by a tap, by game target. A card is dropped from
+    // here once it has turned back to its front.
+    struct GridFlip {
+        bool back = false;
+        float angle = 0.0f;           // radians, 0 = front, pi = back
+    };
+    std::unordered_map<std::string, GridFlip> grid_flips_;
     std::string retro_media_type_ = "box2d";
     std::string retro_media_email_;
     std::string retro_media_message_ = "Not signed in";

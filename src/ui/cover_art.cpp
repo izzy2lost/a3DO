@@ -288,6 +288,7 @@ CoverImage CoverDecoder::decode(const std::string& path, const u8* bytes,
     // bound it rather than assuming one layout.
     const bool wrap = w * 10 >= h * 12;
     int back_end = w / 2, front_start = w / 2;
+    int banner_end = 0;   // where the front's banner ends, 0 without one
     if (wrap) {
         // For each column, the share of rows with a sharp colour step to the
         // next column. A printed panel edge runs the full height; picture
@@ -339,6 +340,10 @@ CoverImage CoverDecoder::decode(const std::string& path, const u8* bytes,
                 // the width to a white rule at 0.55. All of it is spine.
                 float strip_score = 0.0f;
                 back_end = strongest(0.35, 0.40, &strip_score);
+                // The front then opens with a white banner carrying the 3DO
+                // logo, a fixed part of the template whose black band ends
+                // at the same place on every scan.
+                banner_end = static_cast<int>(0.66 * w);
             } else if (back_score < 0.2f) {
                 back_end = std::min(back_end, w - front_start);
             }
@@ -355,6 +360,9 @@ CoverImage CoverDecoder::decode(const std::string& path, const u8* bytes,
     image.front_height = out_h;
     image.front = resample(pixels + static_cast<size_t>(wrap ? front_start : 0) * 4,
                            w, front_w, h, image.front_width, out_h);
+    if (wrap && banner_end > front_start && banner_end < w)
+        image.front_banner = static_cast<float>(banner_end - front_start) /
+                             static_cast<float>(front_w);
     if (wrap) {
         image.back_width = scaled(back_end);
         image.back_height = out_h;

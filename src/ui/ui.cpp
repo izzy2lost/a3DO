@@ -397,6 +397,7 @@ void Ui::pump_covers() {
                              static_cast<float>(std::max(1, image.front_height));
         cover.back_aspect = static_cast<float>(image.back_width) /
                             static_cast<float>(std::max(1, image.back_height));
+        cover.front_banner = image.front_banner;
         cover.spine = upload(image.spine, image.spine_width, image.spine_height);
         if (cover.spine) {
             cover.spine_aspect = static_cast<float>(image.spine_width) /
@@ -1408,25 +1409,9 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
             const CoverTexture* pack = cover_for(game.name);
             SDL_Texture* cover = pack == nullptr ? artwork_texture(game.name) : nullptr;
             if (pack != nullptr) {
-                float art_w = art_height * pack->front_aspect;
-                float art_h = art_height;
-                const float room = card_width - padding * 2.0f;
-                if (art_w > room) {
-                    art_h *= room / art_w;
-                    art_w = room;
-                }
-                const ImVec2 art_min(card_top.x + (card_width - art_w) * 0.5f,
-                                     content_top + (art_height - art_h) * 0.5f);
-                const ImVec2 art_max(art_min.x + art_w, art_min.y + art_h);
-                // A soft shadow lifts the cover off the card.
-                draw->AddRectFilled(ImVec2(art_min.x + 3.0f * scale_, art_min.y + 4.0f * scale_),
-                                    ImVec2(art_max.x + 3.0f * scale_, art_max.y + 4.0f * scale_),
-                                    IM_COL32(0, 0, 0, 110), 4.0f * scale_);
-                draw->AddImageRounded(
-                    ImTextureRef(static_cast<ImTextureID>(
-                        reinterpret_cast<intptr_t>(pack->front))),
-                    art_min, art_max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
-                    IM_COL32_WHITE, 4.0f * scale_);
+                draw_grid_cover(draw, *pack, game.target,
+                                ImVec2(card_top.x + padding, content_top),
+                                ImVec2(card_width - padding * 2.0f, art_height));
             } else if (cover != nullptr) {
                 const ArtworkTexture& item = artwork_.find(game.name)->second;
                 const float aspect = static_cast<float>(item.width) /
@@ -1514,6 +1499,92 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
                 : "No BIOS is loaded. Choose one in Settings.");
     }
     ImGui::EndChild();
+}
+
+// A grid card's cover. The front leaves out the US banner (see
+// CoverImage::front_banner) so every card shows just its art; a tap turns the
+// card over about its upright axis to the back, drawn in narrow strips with a
+// touch of perspective so it reads as a turning box rather than a squeeze.
+void Ui::draw_grid_cover(ImDrawList* draw, const CoverTexture& cover,
+                         const std::string& key, ImVec2 pos, ImVec2 size) {
+    constexpr float kPi = 3.14159265f;
+    const bool has_back = cover.back != nullptr;
+
+    ImGui::SetCursorScreenPos(pos);
+    const bool tapped = ImGui::InvisibleButton("##cover", size) && has_back;
+    auto found = grid_flips_.find(key);
+    if (tapped) {
+        if (found == grid_flips_.end()) found = grid_flips_.emplace(key, GridFlip{}).first;
+        found->second.back = !found->second.back;
+    }
+    float angle = 0.0f;
+    if (found != grid_flips_.end()) {
+        GridFlip& flip = found->second;
+        if (!has_back) flip.back = false;
+        const float goal = flip.back ? kPi : 0.0f;
+        const float step = ImGui::GetIO().DeltaTime * 7.5f *
+                           (0.25f + std::sin(std::clamp(flip.angle, 0.0f, kPi)));
+        if (flip.angle < goal) flip.angle = std::min(goal, flip.angle + step);
+        if (flip.angle > goal) flip.angle = std::max(goal, flip.angle - step);
+        angle = flip.angle;
+        if (!flip.back && flip.angle <= 0.0f) grid_flips_.erase(found);
+    }
+
+    // The face toward the viewer, and its own shape.
+    const bool showing_back = angle > kPi * 0.5f;
+    SDL_Texture* const texture = showing_back ? cover.back : cover.front;
+    const float u0 = showing_back ? 0.0f : std::clamp(cover.front_banner, 0.0f, 0.6f);
+    const float aspect = showing_back ? cover.back_aspect
+                                      : cover.front_aspect * (1.0f - u0);
+    float art_w = size.y * aspect;
+    float art_h = size.y;
+    if (art_w > size.x) {
+        art_h *= size.x / art_w;
+        art_w = size.x;
+    }
+    const ImVec2 centre(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+    const ImTextureRef ref(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture)));
+    const float hw = art_w * 0.5f, hh = art_h * 0.5f;
+    const float lift = 3.0f * scale_, drop = 4.0f * scale_;
+
+    if (angle <= 0.0f || angle >= kPi) {
+        const ImVec2 art_min(centre.x - hw, centre.y - hh);
+        const ImVec2 art_max(centre.x + hw, centre.y + hh);
+        // A soft shadow lifts the cover off the card.
+        draw->AddRectFilled(ImVec2(art_min.x + lift, art_min.y + drop),
+                            ImVec2(art_max.x + lift, art_max.y + drop),
+                            IM_COL32(0, 0, 0, 110), 4.0f * scale_);
+        draw->AddImageRounded(ref, art_min, art_max, ImVec2(u0, 0.0f),
+                              ImVec2(1.0f, 1.0f), IM_COL32_WHITE, 4.0f * scale_);
+        return;
+    }
+
+    // Turning: the face's own angle from square-on, -pi/2..pi/2.
+    const float turn = showing_back ? angle - kPi : angle;
+    const float c = std::cos(turn), s = std::sin(turn);
+    const float camera = size.y * 3.0f;
+    const auto project = [&](float lx, float ly) {
+        const float z = -lx * s;   // the edge swinging out comes nearer
+        const float k = camera / (camera - z);
+        return ImVec2(centre.x + lx * c * k, centre.y + ly * k);
+    };
+    // Darken the face as it turns edge-on, the way a lit box would.
+    const int shade = static_cast<int>(255.0f * (0.55f + 0.45f * std::abs(c)));
+    const ImU32 tint = IM_COL32(shade, shade, shade, 255);
+    const ImVec2 shadow_l = project(-hw, hh), shadow_r = project(hw, hh);
+    draw->AddRectFilled(ImVec2(std::min(shadow_l.x, shadow_r.x) + lift, centre.y - hh + drop),
+                        ImVec2(std::max(shadow_l.x, shadow_r.x) + lift, centre.y + hh + drop),
+                        IM_COL32(0, 0, 0, 80), 4.0f * scale_);
+    constexpr int kStrips = 12;
+    for (int i = 0; i < kStrips; ++i) {
+        const float t0 = static_cast<float>(i) / kStrips;
+        const float t1 = static_cast<float>(i + 1) / kStrips;
+        const float x0 = -hw + art_w * t0, x1 = -hw + art_w * t1;
+        const float v0u = u0 + (1.0f - u0) * t0, v1u = u0 + (1.0f - u0) * t1;
+        draw->AddImageQuad(ref, project(x0, -hh), project(x1, -hh), project(x1, hh),
+                           project(x0, hh), ImVec2(v0u, 0.0f), ImVec2(v1u, 0.0f),
+                           ImVec2(v1u, 1.0f), ImVec2(v0u, 1.0f), tint);
+    }
 }
 
 // A cover carousel: the selected box faces the viewer, its neighbours stand

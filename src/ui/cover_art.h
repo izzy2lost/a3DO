@@ -71,6 +71,10 @@ struct CoverImage {
     std::vector<u8> back;    // RGBA
     int spine_width = 0, spine_height = 0;
     std::vector<u8> spine;   // RGBA, empty when the image has no spine
+    // Share of the front's width, from its left edge, taken by the US
+    // "Interactive Multiplayer" banner. The grid leaves it out so only the
+    // cover art shows; the carousel keeps the whole front.
+    float front_banner = 0.0f;
     bool failed = false;
 };
 
