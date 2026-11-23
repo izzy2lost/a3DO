@@ -1,6 +1,7 @@
 // a3DO front end: splash, library, settings and in-game quick menu.
 #pragma once
 
+#include <algorithm>
 #include <deque>
 #include <memory>
 #include <string>
@@ -260,6 +261,8 @@ private:
         float back_aspect = 0.705f;
         float spine_aspect = 0.0f;    // width / height; 0 without a spine
         float front_banner = 0.0f;    // see CoverImage::front_banner
+        // How much of the front, from its left edge, the library leaves out.
+        float front_cut() const { return std::clamp(front_banner, 0.0f, 0.6f); }
         bool requested = false;
         bool failed = false;
         u64 last_used = 0;

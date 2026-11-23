@@ -1586,7 +1586,7 @@ void Ui::draw_grid_cover(ImDrawList* draw, const CoverTexture& cover,
     // The face toward the viewer, and its own shape.
     const bool showing_back = angle > kPi * 0.5f;
     SDL_Texture* const texture = showing_back ? cover.back : cover.front;
-    const float u0 = showing_back ? 0.0f : std::clamp(cover.front_banner, 0.0f, 0.6f);
+    const float u0 = showing_back ? 0.0f : cover.front_cut();
     const float aspect = showing_back ? cover.back_aspect
                                       : cover.front_aspect * (1.0f - u0);
     float art_w = size.y * aspect;
@@ -1782,6 +1782,7 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         float x, z, angle, depth;   // depth: distance from the middle, for order
         float w, d;                 // box width and depth
         float fade;                 // 1, falling to 0 at the far ends of a wrap
+        float trim;                 // share of the front's height cut off top and bottom
         const CoverTexture* cover;
     };
     std::vector<Placed> placed;
@@ -1814,7 +1815,23 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         p.depth = ad;
         p.fade = wrap ? std::clamp((reach - ad) * 2.0f, 0.0f, 1.0f) : 1.0f;
         p.cover = cover_for(games[static_cast<size_t>(p.game)]->name);
-        p.w = p.cover ? cover_h * p.cover->front_aspect : unit;
+        // Like the grid, the box leaves out the US banner. What is left of a
+        // US front is tall and thin (0.51 wide to 1 high, where other boxes
+        // run 0.55 to 0.70), so it is widened a touch and a sliver is trimmed
+        // off its top and bottom to reach 0.58: neither shows on the art,
+        // and the box stands about as wide as its neighbours.
+        p.w = unit;
+        p.trim = 0.0f;
+        if (p.cover) {
+            const float art = p.cover->front_aspect * (1.0f - p.cover->front_cut());
+            constexpr float kWiden = 1.08f, kSlimmest = 0.58f;
+            if (p.cover->front_cut() > 0.0f && art * kWiden < kSlimmest) {
+                p.trim = (1.0f - art * kWiden / kSlimmest) * 0.5f;
+                p.w = cover_h * kSlimmest;
+            } else {
+                p.w = cover_h * art;
+            }
+        }
         // As deep as the printed spine is wide, up to a slim box. PAL spines
         // are about 8% of the height; the US template's run to 22%, which
         // made a brick of every US box, so wider spines are squeezed to fit.
@@ -1922,7 +1939,8 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     // camera are skipped; the box is convex, so the rest never overlap and
     // need no sorting. Returns whether any of it drew.
     const auto band = [&](const Placed& p, const std::vector<Rim>& rim, const Outline& outline,
-                          SDL_Texture* texture, float u_a, float u_b, ImU32 base) {
+                          SDL_Texture* texture, float u_a, float u_b, ImU32 base,
+                          float trim = 0.0f) {
         const float c = std::cos(p.angle), s = std::sin(p.angle);
         // Lit from the camera: the surface dims as it turns away, a little
         // more on the narrow sides, and boxes further out more again.
@@ -1979,7 +1997,9 @@ void Ui::draw_cover_flow(retro3do_t* emu,
             draw->PushTexture(ImTextureRef(
                 static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture))));
         }
-        const auto uv = [&](float u, float v) { return textured ? ImVec2(u, v) : white_uv; };
+        const auto uv = [&](float u, float v) {
+            return textured ? ImVec2(u, trim + v * (1.0f - 2.0f * trim)) : white_uv;
+        };
         bool drew = false;
         for (size_t i = 0; i + 1 < rim.size(); ++i) {
             const Rim& q0 = rim[i];
@@ -2045,22 +2065,23 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         outline.round = std::min(cover_h * 0.035f * perspective,
                                  (outline.right - outline.left) * 0.25f);
 
-        const bool front_visible = band(p, front_rim, outline, front, 0.0f, 1.0f,
-                                        front ? kWhite : colour(tinted(accent, 0.28f)));
+        const float u0 = cover ? cover->front_cut() : 0.0f;
+        const bool front_visible = band(p, front_rim, outline, front, u0, 1.0f,
+                                        front ? kWhite : colour(tinted(accent, 0.28f)), p.trim);
         band(p, back_rim, outline, back, 0.0f, 1.0f,
              back ? kWhite : colour(tinted(accent, 0.12f)));
         if (cover && cover->spine) {
             band(p, spine_rim, outline, cover->spine, 0.0f, 1.0f, kWhite);
         } else if (front) {
             // No printed spine: carry the front's left edge round the side.
-            band(p, spine_rim, outline, front, 0.004f, 0.012f, kWhite);
+            band(p, spine_rim, outline, front, u0 + 0.004f, u0 + 0.012f, kWhite, p.trim);
         } else {
             band(p, spine_rim, outline, nullptr, 0.0f, 0.0f, colour(tinted(accent, 0.2f)));
         }
         // The open edge has nothing printed on it; the front's right edge,
         // carried round and darkened, reads better than bare black.
         if (front) {
-            band(p, edge_rim, outline, front, 0.988f, 0.996f, kEdge);
+            band(p, edge_rim, outline, front, 0.988f, 0.996f, kEdge, p.trim);
         } else {
             band(p, edge_rim, outline, nullptr, 0.0f, 0.0f, colour(tinted(accent, 0.16f)));
         }
