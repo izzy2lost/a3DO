@@ -117,6 +117,9 @@ private:
     void start_cover_download();
     void load_nvram();
     void save_nvram();
+    // Make the given game's own NVRAM the live one, writing out the one it
+    // replaces. A game with none yet starts from a copy of the shared image.
+    void use_game_nvram(const std::string& disc_title);
     bool open_bios(const std::string& path, const std::string& name);
     bool open_disc(const std::string& path, const std::string& name);
     void save_state_slot(int slot);
@@ -187,6 +190,10 @@ private:
     int persisted_library_count_ = 0;
     // Reused across saves so a save does not allocate thirty-two kilobytes.
     std::vector<u8> nvram_scratch_;
+    // The file the live NVRAM is saved to: the shared nvram.bin until a game
+    // starts, then that game's own (game_nvram_path).
+    std::string nvram_path_;
+    std::string disc_title_;       // the disc in the drive, as its slots are named
     std::string save_state_dir_;   // the disc in the drive's slots; empty with none
     // The touch controls' boxes as last handed to Android, in pixels, so the
     // system is only told again when they move.

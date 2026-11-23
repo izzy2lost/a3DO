@@ -17,6 +17,14 @@ TEST(save_state_folders_are_named_after_the_game_and_safe) {
     CHECK(slot_thumb_path("/d/states/Gex", 10) == "/d/states/Gex/slot10.thumb");
 }
 
+TEST(each_game_has_its_own_nvram_shared_by_all_its_discs) {
+    CHECK(game_nvram_path("/d", "Gex (USA, Europe).chd") == "/d/nvram/Gex (USA, Europe).bin");
+    CHECK(game_nvram_path("/d/", "Road Rash (USA)") == "/d/nvram/Road Rash (USA).bin");
+    CHECK(game_nvram_path("/d", "Myst (USA) (Disc 1).chd") == "/d/nvram/Myst (USA).bin");
+    CHECK(game_nvram_path("/d", "Myst (USA) (disc 2 of 2)") == "/d/nvram/Myst (USA).bin");
+    CHECK(game_nvram_path("/d", "a/b:c?.iso") == "/d/nvram/a_b_c_.bin");
+}
+
 TEST(a_thumbnail_averages_and_survives_a_round_trip) {
     // 4x2: left half red, right half blue.
     const std::vector<u32> frame = {0xff0000, 0xff0000, 0x0000ff, 0x0000ff,

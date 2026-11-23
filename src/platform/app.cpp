@@ -39,9 +39,11 @@ extern "C" bool retro3do_configure_vulkan_driver(
 constexpr int kDefaultWindowWidth  = 1280;
 constexpr int kDefaultWindowHeight = 720;
 
-// One NVRAM, shared by every title, exactly as a console has one. Keeping a
-// separate image per disc would be tidier to reason about, but it is not what
-// the hardware does and it would break the titles that read each other's saves.
+// The shared NVRAM, as a console has one. It is live only with no game
+// running (the BIOS's own storage manager sees it); each game gets its own
+// image instead, see use_game_nvram. One shared 32 KB fills up quickly - a
+// single title's saves can take most of it - and a full NVRAM stops every
+// other game saving. The cost is the rare title that reads another's saves.
 constexpr const char* kNvramFile = "nvram.bin";
 
 std::string library_key(int index, const std::string& field) {
@@ -302,8 +304,10 @@ bool App::init() {
         SDL_GetWindowSize(window_, &window_w, &window_h);
         touch_->reset_layout(window_w, window_h);
     }
-    load_settings();
+    // The shared NVRAM first: opening the remembered game in load_settings
+    // replaces it with that game's own.
     load_nvram();
+    load_settings();
 
     if (launch_demo_) {
         retro3do_eject_disc(emu_);
@@ -767,6 +771,7 @@ bool App::open_disc(const std::string& path, const std::string& name) {
         // which is also all a state can be loaded into.
         std::string title = name;
         if (title.empty()) title = std::filesystem::path(path).filename().string();
+        disc_title_ = title;
         save_state_dir_ = save_state_dir(Storage::writable_directory(), title);
         ui_->set_save_state_dir(save_state_dir_);
     }
@@ -992,9 +997,9 @@ void App::set_launch_files(std::string bios, std::string disc) {
 // it would offer to reformat it, which would lose everything.
 void App::load_nvram() {
     if (emu_ == nullptr) return;
-    const std::string path = Storage::join(Storage::writable_directory(), kNvramFile);
+    nvram_path_ = Storage::join(Storage::writable_directory(), kNvramFile);
     size_t size = 0;
-    void* data = SDL_LoadFile(path.c_str(), &size);
+    void* data = SDL_LoadFile(nvram_path_.c_str(), &size);
     if (data == nullptr) {
         return;
     }
@@ -1007,7 +1012,7 @@ void App::load_nvram() {
 // every time: the machine only writes the NVRAM when the user saves, so the
 // file is only touched then too.
 void App::save_nvram() {
-    if (emu_ == nullptr) return;
+    if (emu_ == nullptr || nvram_path_.empty()) return;
     nvram_scratch_.resize(retro3do_nvram_size(emu_));
     u32 written = 0;
     if (retro3do_take_nvram(emu_, nvram_scratch_.data(),
@@ -1015,8 +1020,56 @@ void App::save_nvram() {
                             &written) == 0) {
         return;
     }
-    const std::string path = Storage::join(Storage::writable_directory(), kNvramFile);
-    SDL_SaveFile(path.c_str(), nvram_scratch_.data(), written);
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(nvram_path_).parent_path(),
+                                        error);
+    SDL_SaveFile(nvram_path_.c_str(), nvram_scratch_.data(), written);
+}
+
+// Done as a game starts, before it runs, so its first look at the NVRAM finds
+// its own saves. Changing discs within a game keeps the image: every disc of
+// a game maps to the same file.
+//
+// A game's first start copies the shared image, so saves made before games
+// had their own NVRAM are still there. The copy is written at once, so it is
+// made only once even if the game never saves. A file of the wrong size is
+// set aside rather than overwritten - it may still be someone's saves.
+void App::use_game_nvram(const std::string& disc_title) {
+    if (emu_ == nullptr || disc_title.empty()) return;
+    const std::string data_dir = Storage::writable_directory();
+    const std::string path = game_nvram_path(data_dir, disc_title);
+    if (path == nvram_path_) return;
+
+    save_nvram();   // the outgoing image's last save, to its own file
+
+    const u32 expected = retro3do_nvram_size(emu_);
+    size_t size = 0;
+    void* data = SDL_LoadFile(path.c_str(), &size);
+    if (data != nullptr && size == expected) {
+        retro3do_restore_nvram(emu_, static_cast<const u8*>(data), expected);
+        SDL_free(data);
+        nvram_path_ = path;
+        return;
+    }
+    if (data != nullptr) {
+        SDL_free(data);
+        std::error_code error;
+        std::filesystem::rename(path, path + ".bad", error);
+        SDL_Log("NVRAM %s is the wrong size; kept as .bad", path.c_str());
+    }
+
+    const std::string shared = Storage::join(data_dir, kNvramFile);
+    void* shared_data = SDL_LoadFile(shared.c_str(), &size);
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
+    if (shared_data != nullptr && size == expected &&
+        retro3do_restore_nvram(emu_, static_cast<const u8*>(shared_data), expected)) {
+        SDL_SaveFile(path.c_str(), shared_data, size);
+    } else {
+        retro3do_format_nvram(emu_);
+    }
+    if (shared_data != nullptr) SDL_free(shared_data);
+    nvram_path_ = path;
 }
 
 void App::load_settings() {
@@ -1090,6 +1143,7 @@ void App::load_settings() {
             settings_->remove(settings_key::kDiscPath);
             settings_->remove(settings_key::kDiscName);
         } else {
+            use_game_nvram(disc_title_);
             // Android's configured games folder owns its library. Desktop has
             // no SAF setup, so direct opens remain its way to populate cards.
             if (!AndroidStorage::available()) remember_game(disc_name, disc);
@@ -1881,6 +1935,8 @@ void App::tick() {
             }
             save_settings();
             selected_disc_ready = true;
+            // A new game brings its own NVRAM; a disc swap mid-game keeps it.
+            if (intent.start_disc) use_game_nvram(disc_title_);
             // A disc swap mid-game keeps the set; a new game loads its own.
             identify_disc_for_cheevos(!intent.start_disc);
             retro3do_disc_info disc;

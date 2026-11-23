@@ -24,6 +24,12 @@ constexpr int kSaveSlots = 10;
 // "Road Rash (USA).chd" and "Road Rash (USA)" share a folder.
 std::string save_state_dir(const std::string& data_dir, const std::string& disc_name);
 std::string slot_state_path(const std::string& dir, int slot);   // slot 1..10
+
+// The file holding a game's own NVRAM: <data>/nvram/<game>.bin. Named like
+// the state folder, except that a "(Disc 2)" tag is dropped, so every disc of
+// a multi-disc game shares one NVRAM - saves made on one disc are read back
+// on the next.
+std::string game_nvram_path(const std::string& data_dir, const std::string& disc_name);
 std::string slot_thumb_path(const std::string& dir, int slot);
 
 struct Thumbnail {

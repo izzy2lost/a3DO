@@ -1,6 +1,7 @@
 #include "app/save_slots.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 
@@ -19,7 +20,11 @@ std::string join(const std::string& a, const std::string& b) {
 
 }  // namespace
 
-std::string save_state_dir(const std::string& data_dir, const std::string& disc_name) {
+namespace {
+
+// The disc's display name, with its extension and anything a file system
+// might refuse taken out.
+std::string safe_name(const std::string& disc_name) {
     std::string name = disc_name;
     // Only a short trailing extension, so "Gex (USA, Europe)" keeps its ")".
     const size_t dot = name.find_last_of('.');
@@ -36,7 +41,33 @@ std::string save_state_dir(const std::string& data_dir, const std::string& disc_
     while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.')) safe.pop_back();
     while (!safe.empty() && (safe.front() == ' ' || safe.front() == '.')) safe.erase(0, 1);
     if (safe.empty()) safe = "unnamed";
-    return join(join(data_dir, "states"), safe);
+    return safe;
+}
+
+// Take out a "(Disc 2)" or "(Disc 2 of 3)" tag, ignoring case, so every disc
+// of a game comes out with the same name.
+std::string without_disc_number(std::string name) {
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const size_t open = lower.find("(disc ");
+    if (open == std::string::npos) return name;
+    const size_t close = lower.find(')', open);
+    if (close == std::string::npos) return name;
+    size_t from = open;
+    while (from > 0 && name[from - 1] == ' ') --from;
+    name.erase(from, close + 1 - from);
+    return name;
+}
+
+}  // namespace
+
+std::string save_state_dir(const std::string& data_dir, const std::string& disc_name) {
+    return join(join(data_dir, "states"), safe_name(disc_name));
+}
+
+std::string game_nvram_path(const std::string& data_dir, const std::string& disc_name) {
+    return join(join(data_dir, "nvram"), safe_name(without_disc_number(disc_name)) + ".bin");
 }
 
 std::string slot_state_path(const std::string& dir, int slot) {
