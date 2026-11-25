@@ -1761,17 +1761,27 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     const float camera = cover_h * 4.0f;
 
     // ---- input ---------------------------------------------------------
-    ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_drawn));
+    // InvisibleButton leaves navigation out unless asked, which made a
+    // controller's down skip the covers and land on the buttons under them.
+    ImGui::InvisibleButton("##cover_flow", ImVec2(avail.x, flow_drawn),
+                           ImGuiButtonFlags_EnableNav);
+    // A controller opening the library starts on the covers.
+    ImGui::SetItemDefaultFocus();
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool focused = ImGui::IsItemFocused();
+    const bool nav_shown = g.NavCursorVisible;
     const bool hovered = ImGui::IsItemHovered();
     const float spacing = unit * 0.54f;          // screen px per index, side covers
     if (ImGui::IsItemActivated()) {
+        carousel_pointer_ = g.ActiveIdSource == ImGuiInputSource_Mouse;
         carousel_drag_x_ = io.MousePos.x;
         carousel_drag_pos_ = carousel_pos_;
         carousel_moved_ = false;
         carousel_velocity_ = 0.0f;
     }
     bool tapped = false;
-    if (ImGui::IsItemActive()) {
+    bool pad_pressed = false;   // A (or Enter) on the focused covers
+    if (ImGui::IsItemActive() && carousel_pointer_) {
         const float dx = io.MousePos.x - carousel_drag_x_;
         if (std::abs(dx) > 8.0f * scale_) carousel_moved_ = true;
         if (carousel_moved_) {
@@ -1784,7 +1794,9 @@ void Ui::draw_cover_flow(retro3do_t* emu,
             carousel_velocity_ = carousel_velocity_ * 0.6f + v * 0.4f;
         }
     }
-    if (ImGui::IsItemDeactivated()) {
+    if (ImGui::IsItemDeactivated() && !carousel_pointer_) {
+        pad_pressed = true;
+    } else if (ImGui::IsItemDeactivated()) {
         if (carousel_moved_) {
             // A fling carries on a little way before settling.
             carousel_target_ = static_cast<int>(std::lround(
@@ -1799,16 +1811,20 @@ void Ui::draw_cover_flow(retro3do_t* emu,
         if (wheel < 0.0f) --carousel_target_;
     }
     if (!io.WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+        // Left and right turn the covers while they have the focus (or no
+        // focus is showing, as with a mouse); on the buttons below they move
+        // between those buttons instead. The shoulders turn them anywhere.
+        const bool steer = focused || !nav_shown;
+        if ((steer && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) --carousel_target_;
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+        if ((steer && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight))) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) ++carousel_target_;
     }
     if (wrap) fold();
     else carousel_target_ = std::clamp(carousel_target_, 0, count - 1);
-    if (!ImGui::IsItemActive() || !carousel_moved_) {
+    if (!ImGui::IsItemActive() || !carousel_pointer_ || !carousel_moved_) {
         carousel_pos_ += (static_cast<float>(carousel_target_) - carousel_pos_) *
                          (1.0f - std::exp(-dt * 11.0f));
         if (std::abs(carousel_pos_ - carousel_target_) < 0.001f) {
@@ -2156,6 +2172,16 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     }
     draw->PopClipRect();
 
+    // InvisibleButton draws no focus frame of its own, so show one while a
+    // controller or keyboard is on the covers.
+    if (focused && nav_shown) {
+        const float inset = 2.0f * scale_;
+        draw->AddRect(ImVec2(origin.x + inset, origin.y + inset),
+                      ImVec2(origin.x + avail.x - inset, origin.y + flow_drawn - inset),
+                      ImGui::GetColorU32(ImGuiCol_NavCursor), 10.0f * scale_, 0,
+                      2.0f * scale_);
+    }
+
     // Prefetch the next few either way so a swipe lands on finished art.
     const int ahead = std::min(9, (count - 1) / 2);
     for (int k = -ahead; k <= ahead; ++k) {
@@ -2206,7 +2232,10 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     ImGui::BeginDisabled(flip_index_ != selected);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.17f, 0.22f, 1.0f));
     if (ImGui::Button(flipped_ ? "FRONT" : "BACK", ImVec2(flip_w, 0.0f)) ||
+        pad_pressed ||
         (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
+        // A (or a remote's OK) on the covers turns the front one over, as a
+        // tap on it does.
         if (flip_index_ == selected) flipped_ = !flipped_;
     }
     ImGui::PopStyleColor();
@@ -2214,12 +2243,15 @@ void Ui::draw_cover_flow(retro3do_t* emu,
     (void)chosen;
     ImGui::SameLine();
     const ImVec4 accent = card_accent(game.name);
-    ImGui::BeginDisabled(!retro3do_bios_loaded(emu) || retro3do_demo_loaded(emu));
+    const bool can_play = retro3do_bios_loaded(emu) && !retro3do_demo_loaded(emu);
+    ImGui::BeginDisabled(!can_play);
     ImGui::PushStyleColor(ImGuiCol_Button, tinted(accent, 0.35f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, tinted(accent, 0.6f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+    // Enter plays, except on the covers, where it turns the box over.
     if (ImGui::Button("PLAY", ImVec2(button_w - flip_w - gap, 0.0f)) ||
-        (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+        (can_play && !focused && !io.WantTextInput &&
+         ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
         launch_game(game, intent);
     }
     ImGui::PopStyleColor(3);

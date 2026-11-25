@@ -371,6 +371,7 @@ private:
     float carousel_drag_x_ = 0.0f;
     float carousel_drag_pos_ = 0.0f;
     bool carousel_moved_ = false;
+    bool carousel_pointer_ = false;   // held by a finger or mouse, not a pad's A
     int flip_index_ = -1;             // the cover that is turned or turning
     bool flipped_ = false;            // want the back of flip_index_ showing
     float flip_angle_ = 0.0f;         // radians, 0 = front, pi = back
