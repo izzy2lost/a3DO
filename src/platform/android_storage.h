@@ -84,6 +84,12 @@ public:
     // later, and granted_roots() will include it once the user has chosen.
     static void pick_folder();
 
+    // False on Android TV and other devices whose folder picker is a stub.
+    // There pick_folder() opens "Add games" instead: files picked in a file
+    // manager are copied into a3DO's own Games folder, which then arrives
+    // through consume_picked_folder() as a plain path. True off Android.
+    static bool folder_picker_available();
+
     // Folders the user has granted, most recently added last.
     static std::vector<DocumentEntry> granted_roots();
 

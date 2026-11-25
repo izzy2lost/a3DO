@@ -190,6 +190,9 @@ public:
     void shutdown();
 
     void process_event(const SDL_Event& event);
+    // Open (or close) the in-game menu, as Escape or Back does. Used for the
+    // controller's Start+Select combination.
+    void request_menu() { menu_requested_ = true; }
     bool wants_mouse() const;
     bool wants_keyboard() const;
 

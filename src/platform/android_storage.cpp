@@ -180,6 +180,26 @@ void AndroidStorage::pick_folder() {
     e->DeleteLocalRef(cls);
 }
 
+bool AndroidStorage::folder_picker_available() {
+    // Asked once: it cannot change while the app runs, and the UI asks every frame.
+    static const bool works = [] {
+        JNIEnv* e = env();
+        if (e == nullptr) return true;
+        jclass cls = activity_class(e);
+        if (cls == nullptr) {
+            clear_pending_exception(e);
+            return true;
+        }
+        bool result = true;
+        jmethodID method = e->GetStaticMethodID(cls, "nativeFolderPickerWorks", "()Z");
+        if (method != nullptr) result = e->CallStaticBooleanMethod(cls, method) != JNI_FALSE;
+        clear_pending_exception(e);
+        e->DeleteLocalRef(cls);
+        return result;
+    }();
+    return works;
+}
+
 std::vector<DocumentEntry> AndroidStorage::granted_roots() {
     return parse_listing(
         call_static_string("nativeGrantedRoots", "()Ljava/lang/String;", nullptr),
@@ -485,6 +505,7 @@ void AndroidStorage::pick_folder() {}
 std::vector<DocumentEntry> AndroidStorage::granted_roots() { return {}; }
 DocumentEntry AndroidStorage::consume_picked_folder() { return {}; }
 void AndroidStorage::forget_root(const std::string&) {}
+bool AndroidStorage::folder_picker_available() { return true; }
 std::vector<DocumentEntry> AndroidStorage::list(const std::string&) { return {}; }
 int AndroidStorage::open_document(const std::string&) { return -1; }
 void AndroidStorage::pick_bios_file() {}

@@ -30,7 +30,7 @@
 namespace retro3do {
 namespace {
 
-#if defined(__ANDROID__)
+#if RETRO3DO_CUSTOM_GPU_DRIVERS
 extern "C" bool retro3do_configure_vulkan_driver(
     const char* private_directory, const char* native_library_directory,
     const char* driver_directory, const char* driver_library);
@@ -103,6 +103,8 @@ App::~App() {
             pad = nullptr;
         }
     }
+    for (SDL_Gamepad* remote : remotes_) SDL_CloseGamepad(remote);
+    remotes_.clear();
     if (frame_texture_) SDL_DestroyTexture(frame_texture_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_) SDL_DestroyWindow(window_);
@@ -158,7 +160,7 @@ bool App::init() {
     }
 #endif
 
-#if defined(__ANDROID__)
+#if RETRO3DO_CUSTOM_GPU_DRIVERS
     const std::string driver_directory =
         settings_->get(settings_key::kGpuDriverDirectory);
     const std::string driver_library =
@@ -534,10 +536,32 @@ void App::handle_events() {
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
             case SDL_EVENT_GAMEPAD_BUTTON_UP: {
                 const int slot = pad_slot_for(event.gbutton.which);
-                if (slot >= 0) {
-                    apply_gamepad_button(slot, event.gbutton.button,
-                                         event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+                if (slot < 0) break;
+                const bool down = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                const int button = event.gbutton.button;
+                // A TV remote's Back arrives as East. On a remote it means
+                // "menu", as on every other TV app, not the 3DO's B.
+                if (button == SDL_GAMEPAD_BUTTON_EAST && is_remote(event.gbutton.which)) {
+                    if (down) ui_->request_menu();
+                    break;
                 }
+                if (button == SDL_GAMEPAD_BUTTON_START || button == SDL_GAMEPAD_BUTTON_BACK) {
+                    const u8 bit = button == SDL_GAMEPAD_BUTTON_START ? 1 : 2;
+                    u8& held = menu_combo_held_[slot];
+                    held = down ? (held | bit) : (held & ~bit);
+                    if (held == 3 && !menu_combo_fired_[slot]) {
+                        // Take back whichever of P and X went to the game first.
+                        apply_gamepad_button(slot, SDL_GAMEPAD_BUTTON_START, false);
+                        apply_gamepad_button(slot, SDL_GAMEPAD_BUTTON_BACK, false);
+                        menu_combo_fired_[slot] = true;
+                        ui_->request_menu();
+                    }
+                    if (menu_combo_fired_[slot]) {
+                        if (held == 0) menu_combo_fired_[slot] = false;
+                        break;
+                    }
+                }
+                apply_gamepad_button(slot, button, down);
                 break;
             }
 
@@ -761,8 +785,10 @@ void App::finish_bios_change() {
 bool App::open_disc(const std::string& path, const std::string& name) {
     if (path.empty()) return false;
     SDL_Log("open disc: %s", path.c_str());
+    // A plain path on Android is a game "Add games" copied into a3DO's own
+    // folder: opened by path, so a cue sheet can find its tracks beside it.
     const bool opened =
-        AndroidStorage::available()
+        AndroidStorage::available() && path.rfind("content://", 0) == 0
             ? retro3do_load_disc_fd(emu_, AndroidStorage::open_document(path),
                                     (name.empty() ? path : name).c_str()) != 0
             : retro3do_load_disc(emu_, path.c_str()) != 0;
@@ -1548,8 +1574,31 @@ int App::pad_slot_for(u32 joystick_id) const {
             return slot;
         }
     }
+    for (SDL_Gamepad* remote : remotes_) {
+        if (SDL_GetGamepadID(remote) == joystick_id) return 0;
+    }
     return -1;
 }
+
+bool App::is_remote(u32 joystick_id) const {
+    for (SDL_Gamepad* remote : remotes_) {
+        if (SDL_GetGamepadID(remote) == joystick_id) return true;
+    }
+    return false;
+}
+
+namespace {
+
+// A remote rather than a controller. Android TV reports its IR receiver, a
+// Bluetooth remote and even a search key as gamepads, and their button lists
+// cannot be trusted (an IR receiver claims all 36). What they lack is axes:
+// every real controller has at least two, sticks or a d-pad reported as a
+// hat's X and Y, while these have none or one.
+bool is_remote_like(SDL_Gamepad* pad) {
+    return SDL_GetNumJoystickAxes(SDL_GetGamepadJoystick(pad)) < 2;
+}
+
+}  // namespace
 
 // A 3DO chains its pads: the machine sees one serial stream with every
 // connected pad in it, which is why it needs no multitap and why four-player
@@ -1561,6 +1610,14 @@ int App::pad_slot_for(u32 joystick_id) const {
 void App::open_gamepad(u32 which) {
     if (pad_slot_for(which) >= 0) {
         return;
+    }
+    if (SDL_Gamepad* probe = SDL_OpenGamepad(which)) {
+        if (is_remote_like(probe)) {
+            remotes_.push_back(probe);
+            SDL_Log("Remote %s drives pad 1", SDL_GetGamepadName(probe));
+            return;
+        }
+        SDL_CloseGamepad(probe);
     }
     for (int slot = 0; slot < static_cast<int>(RETRO3DO_MAX_PADS); ++slot) {
         if (gamepads_[slot] != nullptr) {
@@ -1581,6 +1638,13 @@ void App::open_gamepad(u32 which) {
 }
 
 void App::close_gamepad(u32 which) {
+    for (auto it = remotes_.begin(); it != remotes_.end(); ++it) {
+        if (SDL_GetGamepadID(*it) == which) {
+            SDL_CloseGamepad(*it);
+            remotes_.erase(it);
+            return;
+        }
+    }
     const int slot = pad_slot_for(which);
     if (slot < 0) {
         return;

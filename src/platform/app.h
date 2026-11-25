@@ -95,6 +95,7 @@ private:
     // ours. Controllers keep the slot they were given for as long as they stay
     // plugged in, so unplugging player two does not shuffle player three.
     int pad_slot_for(u32 joystick_id) const;
+    bool is_remote(u32 joystick_id) const;
     void apply_gamepad_button(int slot, int button, bool down);
     void apply_gamepad_axis(int slot, int axis, s16 value);
     void load_settings();
@@ -164,6 +165,16 @@ private:
     // One host controller per chained 3DO pad. Slot zero is also what the
     // keyboard and the on-screen controls drive, so it is never freed.
     SDL_Gamepad* gamepads_[RETRO3DO_MAX_PADS] = {};
+    // TV remotes and similar d-pad-only devices that Android reports as
+    // gamepads (an IR receiver, a Bluetooth remote, a search key). They take
+    // no pad of their own, which would push a real controller to pad 2 or
+    // later; their presses go to pad 1, as the keyboard's do.
+    std::vector<SDL_Gamepad*> remotes_;
+    // Start+Select held together opens the menu. Per pad: which of the two
+    // are held (1 Start, 2 Select), and whether this hold already fired, so
+    // the buttons do not also reach the game until both are let go.
+    u8 menu_combo_held_[RETRO3DO_MAX_PADS] = {};
+    bool menu_combo_fired_[RETRO3DO_MAX_PADS] = {};
 
     // Which way each analogue axis is currently being held, per pad. Kept so a
     // stick resting near the threshold cannot chatter: crossing out of a

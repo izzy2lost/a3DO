@@ -12,6 +12,7 @@ import android.os.Build;
 import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
+import android.widget.Toast;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
@@ -89,7 +90,8 @@ public class A3DOActivity extends SDLActivity {
     // Consumed once by the native setup wizard after the asynchronous system
     // picker returns. Keeping the actual URI avoids guessing which persisted
     // grant is new when the user selects a folder that was already granted.
-    private String pickedFolder;
+    // volatile: an "Add games" copy finishes on its own thread.
+    private volatile String pickedFolder;
     private volatile String gpuDriverImportResult;
     private volatile String biosImportResult;
     private volatile String retroMediaResult;
@@ -181,6 +183,26 @@ public class A3DOActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == DocumentAccess.REQUEST_ADD_GAMES) {
+            final java.util.List<Uri> uris =
+                    resultCode == RESULT_OK ? DocumentAccess.pickedUris(data)
+                                            : new java.util.ArrayList<Uri>();
+            if (uris.isEmpty()) {
+                // Cancelled: still show what the Games folder already holds,
+                // so the setup screen is not left waiting.
+                if (documents.hasLocalGames()) {
+                    pickedFolder = documents.localGamesDir().getAbsolutePath();
+                }
+                return;
+            }
+            Toast.makeText(this, "Copying " + uris.size() + " file" +
+                           (uris.size() == 1 ? "" : "s") + " into a3DO...",
+                           Toast.LENGTH_LONG).show();
+            new Thread(new Runnable() {
+                @Override public void run() { importGames(uris); }
+            }, "a3DO-add-games").start();
+            return;
+        }
         if (requestCode == DocumentAccess.REQUEST_PICK_FOLDER) {
             if (resultCode == RESULT_OK && data != null) {
                 Uri tree = data.getData();
@@ -222,7 +244,49 @@ public class A3DOActivity extends SDLActivity {
         // The picker must be started from the UI thread; the emulator's thread
         // is what calls in here.
         self.runOnUiThread(new Runnable() {
-            @Override public void run() { self.documents.pickFolder(); }
+            @Override public void run() {
+                if (self.documents.folderPickerWorks()) {
+                    self.documents.pickFolder();
+                } else if (!self.documents.addGames()) {
+                    // No file manager either: the Games folder can still be
+                    // filled from a computer, so say where it is.
+                    String dir = self.documents.localGamesDir().getAbsolutePath();
+                    Toast.makeText(self, "No file manager found. Install one, or copy " +
+                                   "games to " + dir, Toast.LENGTH_LONG).show();
+                    self.pickedFolder = dir;
+                }
+            }
+        });
+    }
+
+    /** False on Android TV and other devices whose folder picker is a stub. */
+    public static boolean nativeFolderPickerWorks() {
+        return instance == null || instance.documents.folderPickerWorks();
+    }
+
+    /** Copies "Add games" picks into the local Games folder, then rescans it. */
+    private void importGames(java.util.List<Uri> uris) {
+        int added = 0;
+        int skipped = 0;
+        String failure = null;
+        for (Uri uri : uris) {
+            try {
+                if (documents.importGame(uri)) added++;
+                else skipped++;
+            } catch (Exception e) {
+                Log.e(TAG, "Could not add " + uri, e);
+                failure = e.getMessage();
+            }
+        }
+        final String message = failure != null
+                ? "Could not add a game: " + failure
+                : "Added " + added + " file" + (added == 1 ? "" : "s") +
+                  (skipped > 0 ? " (" + skipped + " not a 3DO disc)" : "");
+        pickedFolder = documents.localGamesDir().getAbsolutePath();
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                Toast.makeText(A3DOActivity.this, message, Toast.LENGTH_LONG).show();
+            }
         });
     }
 

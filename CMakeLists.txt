@@ -229,17 +229,39 @@ if(ANDROID)
     # Rootless, per-app custom Adreno/Turnip loading. The driver itself is
     # supplied by the user and kept in private app storage; these small BSD
     # libraries only provide Android linker-namespace isolation.
-    add_subdirectory(third_party/libadrenotools EXCLUDE_FROM_ALL)
-    add_library(retro3do_vulkan_loader SHARED
-        src/platform/android_vulkan_loader.cpp)
-    target_link_libraries(retro3do_vulkan_loader PRIVATE adrenotools dl)
-
+    #
+    # AdrenoTools is ARM64-only, and so are the drivers it loads, so 32-bit
+    # builds (armeabi-v7a: most Google TV and Android TV devices) leave it out
+    # and keep to the system Vulkan or GLES driver.
+    #
     # SDLActivity dlopens the app rather than executing it, so on Android the
     # app is a shared library and must be called "main".
     add_library(retro3do SHARED ${RETRO3DO_APP_SOURCES})
     set_target_properties(retro3do PROPERTIES OUTPUT_NAME "main")
-    target_link_libraries(retro3do PRIVATE retro3do_vulkan_loader)
-    add_dependencies(retro3do main_hook hook_impl file_redirect_hook gsl_alloc_hook)
+
+    # In a shared library every function is exported by default, and so may
+    # be replaced by another library at load time. The compiler must then
+    # call each one through the PLT rather than directly, and link-time
+    # optimisation cannot internalise it. For the emulator that meant
+    # Bus::read8, Arm60::execute, Madam::plot_quad and the rest of the hot
+    # path all went through a PLT stub: about six per cent of the emulation
+    # thread on a Cortex-A55 TV. Nothing outside libmain calls them, so the
+    # core is hidden and the library binds its own calls to itself. SDL_main
+    # keeps default visibility through its own declaration.
+    set_target_properties(retro3do retro3do_core PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        C_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_link_options(retro3do PRIVATE "-Wl,-Bsymbolic-functions")
+    if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+        add_subdirectory(third_party/libadrenotools EXCLUDE_FROM_ALL)
+        add_library(retro3do_vulkan_loader SHARED
+            src/platform/android_vulkan_loader.cpp)
+        target_link_libraries(retro3do_vulkan_loader PRIVATE adrenotools dl)
+        target_link_libraries(retro3do PRIVATE retro3do_vulkan_loader)
+        add_dependencies(retro3do main_hook hook_impl file_redirect_hook gsl_alloc_hook)
+        target_compile_definitions(retro3do PRIVATE RETRO3DO_CUSTOM_GPU_DRIVERS=1)
+    endif()
 else()
     add_executable(retro3do ${RETRO3DO_APP_SOURCES})
 endif()

@@ -29,8 +29,10 @@ android {
         externalNativeBuild {
             cmake {
                 arguments "-DANDROID_PLATFORM=android-24", "-DANDROID_STL=c++_static"
-                // abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
-                abiFilters 'arm64-v8a'
+                // armeabi-v7a covers 32-bit phones and most Google TV and
+                // Android TV devices, which run a 32-bit system even on 64-bit
+                // chips. Play's app bundle hands each device only its own ABI.
+                abiFilters 'armeabi-v7a', 'arm64-v8a'
             }
         }
     }

@@ -135,7 +135,9 @@ void same_line_if_fits(const char* label) {
 }
 
 void begin_panel(const char* id, float width, bool stacked) {
-    const ImGuiChildFlags flags = ImGuiChildFlags_Borders |
+    // Flattened, so a d-pad moves straight between panels' buttons rather
+    // than first having to "enter" each panel.
+    const ImGuiChildFlags flags = ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened |
         (stacked ? ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize : 0);
     ImGui::BeginChild(id, ImVec2(width, 0.0f), flags, ImGuiWindowFlags_NoScrollbar);
     ImGui::PushTextWrapPos(0.0f);
@@ -242,6 +244,9 @@ bool Ui::init(SDL_Window* window, SDL_Renderer* renderer) {
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    // A TV remote's d-pad arrives as arrow keys, OK as Enter: with keyboard
+    // navigation it can move through every menu, not only the carousel.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 #if RETRO3DO_MOBILE
     // iPad and iPhone want this for the same reason Android does: it widens
     // ImGui's hit areas to finger size. Not on macOS, which has a pointer.
@@ -303,6 +308,11 @@ bool Ui::init(SDL_Window* window, SDL_Renderer* renderer) {
     update_scale();
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
+    // Every pad drives the menus, not only the first one SDL lists. A TV's IR
+    // receiver shows up as a gamepad (its OK button as South), often beside
+    // other "gamepads" such as a search key, and a real controller may be
+    // listed after them.
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll);
     if (!ImGui_ImplSDLRenderer3_Init(renderer)) return false;
 
     renderer_ = renderer;
@@ -672,6 +682,32 @@ void Ui::update_scale() {
 void Ui::process_event(const SDL_Event& event) {
     if (!initialised_) return;
     ImGui_ImplSDL3_ProcessEvent(&event);
+    // The SDL3 backend only polls gamepad state once a frame. A TV remote
+    // (which Android reports as a gamepad) sends press and release almost
+    // together, so a click can fall between two polls and never be seen.
+    // Queue the button as an event too: ImGui keeps down and up in separate
+    // frames, and the poll's repeat of the same state is ignored.
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+        event.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        ImGuiKey key = ImGuiKey_None;
+        switch (event.gbutton.button) {
+            case SDL_GAMEPAD_BUTTON_DPAD_UP:    key = ImGuiKey_GamepadDpadUp; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_DOWN:  key = ImGuiKey_GamepadDpadDown; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_LEFT:  key = ImGuiKey_GamepadDpadLeft; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: key = ImGuiKey_GamepadDpadRight; break;
+            case SDL_GAMEPAD_BUTTON_SOUTH:      key = ImGuiKey_GamepadFaceDown; break;
+            case SDL_GAMEPAD_BUTTON_EAST:       key = ImGuiKey_GamepadFaceRight; break;
+            case SDL_GAMEPAD_BUTTON_WEST:       key = ImGuiKey_GamepadFaceLeft; break;
+            case SDL_GAMEPAD_BUTTON_NORTH:      key = ImGuiKey_GamepadFaceUp; break;
+            case SDL_GAMEPAD_BUTTON_START:      key = ImGuiKey_GamepadStart; break;
+            case SDL_GAMEPAD_BUTTON_BACK:       key = ImGuiKey_GamepadBack; break;
+            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:  key = ImGuiKey_GamepadL1; break;
+            case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: key = ImGuiKey_GamepadR1; break;
+            default: break;
+        }
+        if (key != ImGuiKey_None)
+            ImGui::GetIO().AddKeyEvent(key, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+    }
     if (event.type == SDL_EVENT_FINGER_DOWN ||
         event.type == SDL_EVENT_FINGER_MOTION ||
         event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -1085,7 +1121,7 @@ void Ui::draw_setup_wizard(UiIntent& intent) {
     ImGui::SetCursorPos(ImVec2((viewport->WorkSize.x - width) * 0.5f,
                                (viewport->WorkSize.y - height) * 0.5f));
     ImGui::BeginChild("##setup_card", ImVec2(width, height),
-                      ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar);
     ImGui::PushTextWrapPos(0.0f);
 
     // Brand header: wordmark and the tricolour rule.
@@ -1100,10 +1136,20 @@ void Ui::draw_setup_wizard(UiIntent& intent) {
     ImGui::TextUnformatted("Where are your games?");
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
-    ImGui::TextWrapped(
-        "Choose the folder that holds your 3DO games (ISO, BIN/CUE, IMG or "
-        "CHD). Subfolders are scanned too, and a3DO can only see the folder "
-        "you choose.");
+    const bool picker = AndroidStorage::folder_picker_available();
+    if (picker) {
+        ImGui::TextWrapped(
+            "Choose the folder that holds your 3DO games (ISO, BIN/CUE, IMG or "
+            "CHD). Subfolders are scanned too, and a3DO can only see the folder "
+            "you choose.");
+    } else {
+        // Android TV: no folder picker, so games are copied in from a file
+        // manager (a cue sheet together with its .bin tracks).
+        ImGui::TextWrapped(
+            "Pick your 3DO games (ISO, BIN/CUE, IMG or CHD) in a file manager and "
+            "a3DO copies them into its own Games folder. For a BIN/CUE game, pick "
+            "the .cue and its .bin files together.");
+    }
     ImGui::PopStyleColor();
     ImGui::Spacing();
 
@@ -1111,16 +1157,19 @@ void Ui::draw_setup_wizard(UiIntent& intent) {
     ImGui::PushStyleColor(ImGuiCol_Button, kRed);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.96f, 0.26f, 0.27f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.12f, 1.0f));
-    if (wide_button(games_folder_target_.empty() ? "CHOOSE GAMES FOLDER"
-                                                 : "CHOOSE A DIFFERENT FOLDER",
-                    button_height)) {
+    const char* choose_label =
+        !picker ? (games_folder_target_.empty() ? "ADD GAMES" : "ADD MORE GAMES")
+                : (games_folder_target_.empty() ? "CHOOSE GAMES FOLDER"
+                                                : "CHOOSE A DIFFERENT FOLDER");
+    if (wide_button(choose_label, button_height)) {
         picking_games_folder_ = true;
         AndroidStorage::pick_folder();
     }
     ImGui::PopStyleColor(3);
 
     if (picking_games_folder_) {
-        ImGui::TextColored(kGold, "Waiting for the folder picker...");
+        ImGui::TextColored(kGold, picker ? "Waiting for the folder picker..."
+                                         : "Waiting for the games to be copied...");
     } else if (!games_folder_target_.empty()) {
         ImGui::TextColored(kGreen, "%s  -  %zu game%s found",
                            games_folder_name_.c_str(), library_.games().size(),
@@ -1291,7 +1340,7 @@ void Ui::draw_launcher(retro3do_t* emu, bool emulating, bool touch_visible,
         ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
         drawn_page_ = page_;
     }
-    ImGui::BeginChild("##page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_NavFlattened,
                       page_flags);
     switch (page_) {
         case Page::Library:  draw_library(emu, intent); break;
@@ -1356,7 +1405,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
     // and the scrollbar itself is intentionally hidden: touch users swipe the
     // list, while desktop users can still use a wheel or trackpad.
     ImGui::BeginChild("##game_list", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_None,
+                      ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar |
                           (cover_view_ ? ImGuiWindowFlags_NoScrollWithMouse : 0));
 
@@ -1364,7 +1413,7 @@ void Ui::draw_library(retro3do_t* emu, UiIntent& intent) {
         library_.filtered(search_buffer_, library_group_);
     if (games.empty()) {
         ImGui::BeginChild("##empty_library", ImVec2(0.0f, 180.0f * scale_),
-                          ImGuiChildFlags_Borders);
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         ImGui::Spacing();
         ImGui::SetWindowFontScale(1.25f);
         ImGui::TextColored(kMuted, library_.games().empty()
@@ -2418,7 +2467,7 @@ void Ui::draw_downloads(UiIntent& intent) {
     ImGui::TextColored(retro_media_busy_ ? kAmber : kMuted, "%s",
                        retro_media_message_.c_str());
     ImGui::BeginChild("##rm_game_catalogue", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                      ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar);
     if (retro_media_catalogue_.empty()) {
         ImGui::TextWrapped(
             "Choose Browse / Refresh to list ROM sets available to this "
@@ -2462,7 +2511,7 @@ void Ui::draw_downloads(UiIntent& intent) {
         ImGui::PushID(game.slug.c_str());
         ImGui::PushStyleColor(ImGuiCol_Border, tinted(accent, 0.45f));
         ImGui::BeginChild("##rm_game", ImVec2(width, row_height),
-                          ImGuiChildFlags_Borders,
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened,
                           ImGuiWindowFlags_NoScrollbar |
                               ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::TextWrapped("%s", game.name.c_str());
@@ -2526,6 +2575,8 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
         ImGui::TextColored(kAmber, "%s", renderer_startup_message_.c_str());
     }
 
+#if !defined(__ANDROID__) || RETRO3DO_CUSTOM_GPU_DRIVERS
+    // Custom drivers are ARM64-only; a 32-bit Android build has no loader.
     ImGui::Separator();
     ImGui::TextColored(kBlue, "CUSTOM ADRENO / TURNIP DRIVER");
     ImGui::TextColored(gpu_driver_name_.empty() ? kMuted : kGreen, "%s",
@@ -2548,6 +2599,7 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     if (!gpu_driver_message_.empty()) {
         ImGui::TextColored(kAmber, "%s", gpu_driver_message_.c_str());
     }
+#endif
 
     ImGui::Separator();
     ImGui::TextColored(kRed, "DISPLAY");
@@ -2615,7 +2667,9 @@ void Ui::draw_system(retro3do_t* emu, UiIntent& intent) {
     ImGui::Text("%.48s", games_folder_name_.empty()
                              ? "Not configured" : games_folder_name_.c_str());
     if (AndroidStorage::available() &&
-        ImGui::Button("CHANGE GAMES FOLDER", ImVec2(-1.0f, 0.0f))) {
+        ImGui::Button(AndroidStorage::folder_picker_available() ? "CHANGE GAMES FOLDER"
+                                                                : "ADD GAMES",
+                      ImVec2(-1.0f, 0.0f))) {
         setup_complete_ = false;
     }
     end_panel();
@@ -2939,7 +2993,7 @@ void Ui::draw_cheevos_page() {
     }
     tricolour_rule(ImGui::GetContentRegionAvail().x, 3.0f * scale_);
 
-    ImGui::BeginChild("##cheevos_list", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##cheevos_list", ImVec2(0.0f, 0.0f), ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
     draw = ImGui::GetWindowDrawList();
     const float badge = 56.0f * scale_;
@@ -3116,7 +3170,7 @@ void Ui::draw_save_states(UiIntent& intent) {
     tricolour_rule(ImGui::GetContentRegionAvail().x, 3.0f * scale_);
 
     // The slots scroll under the header.
-    ImGui::BeginChild("##slots", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+    ImGui::BeginChild("##slots", ImVec2(0.0f, 0.0f), ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
     const float row_h = 78.0f * scale_;
     const float thumb_h = row_h - 12.0f * scale_;

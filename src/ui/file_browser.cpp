@@ -181,8 +181,10 @@ bool FileBrowser::draw(std::string* chosen_path, std::string* chosen_name) {
                 }
                 ImGui::PopID();
             }
-            wrap_root("+ Add folder");
-            if (ImGui::Button("+ Add folder")) {
+            const char* add_label = AndroidStorage::folder_picker_available()
+                                        ? "+ Add folder" : "+ Add games";
+            wrap_root(add_label);
+            if (ImGui::Button(add_label)) {
                 AndroidStorage::pick_folder();
             }
 
@@ -237,7 +239,7 @@ bool FileBrowser::draw(std::string* chosen_path, std::string* chosen_name) {
 
         // A tall touch-friendly list. Selectable rows rather than tree nodes:
         // a finger needs a big target, and there is nothing to expand.
-        ImGui::BeginChild("entries", ImVec2(0, 0), ImGuiChildFlags_Borders,
+        ImGui::BeginChild("entries", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened,
                           ImGuiWindowFlags_NoScrollbar);
         for (const Entry& entry : entries_) {
             const std::string label = entry.name + (entry.is_directory ? "/" : "");

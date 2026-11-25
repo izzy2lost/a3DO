@@ -1,6 +1,9 @@
 package com.izzy2lost.a3do;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
+import android.content.pm.ResolveInfo;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -10,10 +13,13 @@ import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.util.Log;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.io.InputStream;
 import java.io.OutputStream;
 
@@ -37,11 +43,181 @@ public final class DocumentAccess {
     private static final String KEY_ROOTS = "granted_roots";
 
     public static final int REQUEST_PICK_FOLDER = 0x3D0F;
+    public static final int REQUEST_ADD_GAMES = 0x3D10;
+
+    /**
+     * Android TV's stand-ins for DocumentsUI. They resolve the picker intents
+     * and then only say "You don't have an app that can do this".
+     */
+    private static final String STUB_PACKAGE = "com.android.tv.frameworkpackagestubs";
+
+    /** What a game can be, for "Add games" (a cue's .bin is a disc file too). */
+    private static final String[] DISC_EXTENSIONS = {
+            ".iso", ".bin", ".cue", ".img", ".chd" };
 
     private final Activity activity;
 
     public DocumentAccess(Activity activity) {
         this.activity = activity;
+    }
+
+    /**
+     * Whether the system folder picker is real. Android TV ships a stub in its
+     * place (com.android.tv.frameworkpackagestubs), and some boxes have no
+     * picker at all; there the library is built with "Add games" instead.
+     */
+    public boolean folderPickerWorks() {
+        ResolveInfo r = activity.getPackageManager().resolveActivity(
+                new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 0);
+        return r != null && r.activityInfo != null &&
+               !r.activityInfo.packageName.startsWith(STUB_PACKAGE);
+    }
+
+    /**
+     * a3DO's own Games folder, for devices without a folder picker. Games are
+     * copied in here by "Add games", and it can also be filled from a computer
+     * (adb push) since it is app-specific external storage.
+     */
+    public File localGamesDir() {
+        File base = activity.getExternalFilesDir(null);
+        if (base == null) base = activity.getFilesDir();
+        File games = new File(base, "Games");
+        if (!games.isDirectory() && !games.mkdirs()) {
+            Log.w(TAG, "Could not create " + games);
+        }
+        return games;
+    }
+
+    /** A plain filesystem path (a3DO's own Games folder), not a content URI. */
+    public static boolean isLocalPath(String target) {
+        return target != null && target.startsWith("/");
+    }
+
+    /** True when the local Games folder holds anything that looks like a disc. */
+    public boolean hasLocalGames() {
+        return hasDisc(localGamesDir(), 0);
+    }
+
+    private static boolean hasDisc(File dir, int depth) {
+        File[] files = dir.listFiles();
+        if (files == null || depth > 8) return false;
+        for (File f : files) {
+            if (f.getName().startsWith(".")) continue;
+            if (f.isDirectory() ? hasDisc(f, depth + 1) : isDiscName(f.getName())) return true;
+        }
+        return false;
+    }
+
+    private static boolean isDiscName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String ext : DISC_EXTENSIONS) {
+            if (lower.endsWith(ext)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * "Add games": several files picked in whatever file manager the device
+     * has, to be copied into the local Games folder. GET_CONTENT rather than
+     * OPEN_DOCUMENT, because TV file managers (CX File Explorer and the like)
+     * answer it, and the stub is left out of the chooser since it would only
+     * close again. Returns false when there is no file manager at all.
+     */
+    public boolean addGames() {
+        Intent get = new Intent(Intent.ACTION_GET_CONTENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        List<ResolveInfo> handlers =
+                activity.getPackageManager().queryIntentActivities(get, 0);
+        List<ResolveInfo> real = new ArrayList<>();
+        List<ComponentName> stubs = new ArrayList<>();
+        for (ResolveInfo r : handlers) {
+            ComponentName c = new ComponentName(r.activityInfo.packageName, r.activityInfo.name);
+            if (r.activityInfo.packageName.startsWith(STUB_PACKAGE)) stubs.add(c);
+            else real.add(r);
+        }
+        if (real.isEmpty()) return false;
+        Intent launch;
+        if (real.size() == 1) {
+            launch = get.setClassName(real.get(0).activityInfo.packageName,
+                                      real.get(0).activityInfo.name);
+        } else {
+            launch = Intent.createChooser(get, "Add games");
+            if (!stubs.isEmpty()) {
+                launch.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS,
+                                stubs.toArray(new ComponentName[0]));
+            }
+        }
+        try {
+            activity.startActivityForResult(launch, REQUEST_ADD_GAMES);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** The picked files of an "Add games" result. */
+    public static List<Uri> pickedUris(Intent data) {
+        List<Uri> uris = new ArrayList<>();
+        if (data == null) return uris;
+        android.content.ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri u = clip.getItemAt(i).getUri();
+                if (u != null) uris.add(u);
+            }
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        return uris;
+    }
+
+    /**
+     * Copies one picked file into the local Games folder under its own name.
+     * Returns false, copying nothing, when it is not a disc file. The same
+     * file picked again (same name and size) is not copied twice. Call off the
+     * main thread: a disc image is hundreds of megabytes.
+     */
+    public boolean importGame(Uri uri) throws Exception {
+        String name = null;
+        long size = -1;
+        try (Cursor c = activity.getContentResolver().query(uri, new String[] {
+                android.provider.OpenableColumns.DISPLAY_NAME,
+                android.provider.OpenableColumns.SIZE }, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                name = c.getString(0);
+                if (!c.isNull(1)) size = c.getLong(1);
+            }
+        }
+        if (name == null) name = uri.getLastPathSegment();
+        if (name == null) return false;
+        name = name.substring(name.lastIndexOf('/') + 1)
+                   .replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        if (name.isEmpty() || name.startsWith(".") || !isDiscName(name)) return false;
+
+        File dir = localGamesDir();
+        File target = new File(dir, name);
+        if (target.isFile() && size >= 0 && target.length() == size) return true;
+        File part = new File(dir, "." + name + ".part");
+        try (InputStream in = activity.getContentResolver().openInputStream(uri);
+             FileOutputStream out = new FileOutputStream(part)) {
+            if (in == null) throw new Exception("Cannot read " + name);
+            byte[] buffer = new byte[1 << 20];
+            int read;
+            while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+            out.getFD().sync();
+        } catch (Exception e) {
+            part.delete();
+            throw e;
+        }
+        // A cue's tracks keep their names, so the cue still finds them.
+        if (target.exists()) target.delete();
+        if (!part.renameTo(target)) {
+            part.delete();
+            throw new Exception("Cannot save " + name);
+        }
+        return true;
     }
 
     /** Show the system folder picker. The result arrives in onActivityResult. */
@@ -88,6 +264,10 @@ public final class DocumentAccess {
         SharedPreferences prefs =
                 activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String stored = prefs.getString(KEY_ROOTS, "");
+        if (!folderPickerWorks()) {
+            // Nothing can be granted here; a3DO's own Games folder is the root.
+            return new String[] { localGamesDir().getAbsolutePath() };
+        }
         if (stored.isEmpty()) {
             return new String[0];
         }
@@ -130,6 +310,9 @@ public final class DocumentAccess {
 
     /** A human-readable name for a granted folder, for the browser's shortcuts. */
     public String displayNameOf(String uri) {
+        if (isLocalPath(uri)) {
+            return new File(uri).equals(localGamesDir()) ? "a3DO Games" : new File(uri).getName();
+        }
         try {
             Uri tree = Uri.parse(uri);
             String documentId = DocumentsContract.getTreeDocumentId(tree);
@@ -155,6 +338,26 @@ public final class DocumentAccess {
      */
     public String listFolder(String uri) {
         StringBuilder out = new StringBuilder();
+        if (isLocalPath(uri)) {
+            File[] files = new File(uri).listFiles();
+            if (files == null) return "";
+            List<File> sorted = new ArrayList<>();
+            for (File f : files) {
+                if (!f.getName().startsWith(".")) sorted.add(f);
+            }
+            Collections.sort(sorted, new Comparator<File>() {
+                @Override
+                public int compare(File a, File b) {
+                    if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+                    return a.getName().compareToIgnoreCase(b.getName());
+                }
+            });
+            for (File f : sorted) {
+                out.append(f.isDirectory() ? "D" : "F").append('|').append(f.getName())
+                   .append('|').append(f.getAbsolutePath()).append('\n');
+            }
+            return out.toString();
+        }
         try {
             Uri parsed = Uri.parse(uri);
 
@@ -221,6 +424,15 @@ public final class DocumentAccess {
      * read failure that would be extremely hard to attribute.
      */
     public int openDocument(String documentUri) {
+        if (isLocalPath(documentUri)) {
+            try {
+                return ParcelFileDescriptor.open(new File(documentUri),
+                        ParcelFileDescriptor.MODE_READ_ONLY).detachFd();
+            } catch (Exception e) {
+                Log.w(TAG, "Could not open " + documentUri, e);
+                return -1;
+            }
+        }
         try {
             ParcelFileDescriptor pfd = activity.getContentResolver()
                     .openFileDescriptor(Uri.parse(documentUri), "r");
