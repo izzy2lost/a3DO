@@ -394,6 +394,8 @@ private:
     char cheevos_user_buffer_[96] = {};
     char cheevos_password_buffer_[128] = {};
     BadgeCache badges_;
+    // Set when an About link could not open, e.g. on a TV with no browser.
+    std::string about_link_message_;
     std::string retro_media_type_ = "box2d";
     std::string retro_media_email_;
     std::string retro_media_message_ = "Not signed in";

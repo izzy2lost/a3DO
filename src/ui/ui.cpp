@@ -2712,6 +2712,44 @@ void Ui::draw_about() {
         "Commercial games including Road Rash and The Need for Speed reach "
         "correctly rendered gameplay. Compatibility continues to expand; "
         "CD audio and less-used hardware paths remain future work.");
+    ImGui::Spacing();
+    ImGui::TextColored(kGold, "LINKS");
+    {
+        struct Link { const char* label; const char* url; };
+        static const Link links[] = {
+            {"WEBSITE", "https://izzy2lost.com/a3do.html"},
+            {"PRIVACY POLICY", "https://izzy2lost.com/a3do-privacy.html"},
+            {"SOURCE CODE", "https://github.com/izzy2lost/a3DO"},
+            {"CORE SOURCE", "https://github.com/izzy2lost/a3DO-core"},
+            {"DISCORD", "https://discord.gg/YY6Fjc2Ebd"},
+            {"EMAIL", "mailto:izzynochill@gmail.com?subject=a3DO"},
+        };
+        // Two to a row; one to a row when the column is narrow.
+        const float row_gap = ImGui::GetStyle().ItemSpacing.x;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const int per_row = avail < 300.0f * scale_ ? 1 : 2;
+        const float width = (avail - row_gap * (per_row - 1)) / per_row;
+        int i = 0;
+        for (const Link& link : links) {
+            if (i++ % per_row != 0) ImGui::SameLine();
+            if (ImGui::Button(link.label, ImVec2(width, 0.0f))) {
+                // A TV often has no browser or mail app to hand the link to,
+                // so say where it goes instead of doing nothing.
+                const char* shown = std::strncmp(link.url, "mailto:", 7) == 0
+                                        ? "izzynochill@gmail.com"
+                                        : link.url;
+                about_link_message_ = SDL_OpenURL(link.url)
+                                          ? std::string()
+                                          : std::string("Nothing on this device can open it. "
+                                                        "Visit ") + shown;
+            }
+        }
+        if (!about_link_message_.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
+            ImGui::TextWrapped("%s", about_link_message_.c_str());
+            ImGui::PopStyleColor();
+        }
+    }
     end_panel();
 
     if (!stacked) ImGui::SameLine();
@@ -2730,8 +2768,10 @@ void Ui::draw_about() {
     ImGui::Spacing();
     ImGui::TextColored(kGreen, "LICENCE & OWNERSHIP");
     ImGui::TextWrapped(
-        "Application and emulation core: MIT License, Copyright (c) 2026 Crown "
-        "Park Computing. Bundled components keep their own licences: SDL3, "
+        "a3DO is developed by izzy2lost, based on Retro-3DO by Crown Park "
+        "Computing. Application and emulation core: MIT License; original code "
+        "Copyright (c) 2026 Crown Park Computing. Bundled components keep their "
+        "own licences: SDL3, "
         "Dear ImGui, stb_image, Roboto, AdrenoTools and opera-boot.");
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
     ImGui::TextWrapped(
