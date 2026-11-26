@@ -15,6 +15,8 @@ android/.cxx/
 *.apk
 *.aab
 *.keystore
+*.jks
+android/key.properties
 
 # iOS / macOS
 ios/build/

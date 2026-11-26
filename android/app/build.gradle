@@ -2,14 +2,19 @@ plugins {
      id 'com.android.application'
 }
 
-// The upload key. On a build machine it arrives through KEYSTORE_PATH, and
-// locally it can sit beside the project - but it is never committed, and the
-// only copy of it lives in a CI secret, so BACK IT UP BEFORE RELYING ON IT.
-// Losing this key means never being able to update the Play listing again,
-// by anyone, ever. There is no recovery.
-def localReleaseKeystore = file('../retro3do-release-key.keystore')
-def releaseKeystorePath = System.getenv('KEYSTORE_PATH')
-def releaseKeystoreFile = releaseKeystorePath ? file(releaseKeystorePath) : localReleaseKeystore
+// The upload key. Locally it comes from android/key.properties (gitignored:
+// it holds passwords); on a build machine the same values arrive through
+// KEYSTORE_PATH / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD.
+// BACK THE KEYSTORE UP. Losing it means asking Play for an upload key reset
+// before any further update can ship.
+def keyProps = new Properties()
+def keyPropsFile = rootProject.file('key.properties')
+if (keyPropsFile.exists()) {
+    keyPropsFile.withInputStream { keyProps.load(it) }
+}
+def signingValue = { String prop, String env -> keyProps.getProperty(prop) ?: System.getenv(env) }
+def releaseKeystorePath = signingValue('storeFile', 'KEYSTORE_PATH')
+def releaseKeystoreFile = releaseKeystorePath ? rootProject.file(releaseKeystorePath) : null
 
 android {
     // The namespace names the Java classes and the generated R.
@@ -38,13 +43,13 @@ android {
     }
     signingConfigs {
         release {
-            // Null when the key is absent, which makes an unsigned release
-            // build fail at signing rather than quietly produce something the
-            // store will reject.
-            storeFile releaseKeystoreFile.exists() ? releaseKeystoreFile : null
-            storePassword System.getenv('KEYSTORE_PASSWORD') ?: 'android'
-            keyAlias System.getenv('KEY_ALIAS') ?: '4do-key'
-            keyPassword System.getenv('KEY_PASSWORD') ?: 'android'
+            // Null when the key is absent, which makes a release build fail
+            // at signing rather than quietly produce something the store
+            // will reject. There are no default passwords to fall back on.
+            storeFile releaseKeystoreFile?.exists() ? releaseKeystoreFile : null
+            storePassword signingValue('storePassword', 'KEYSTORE_PASSWORD')
+            keyAlias signingValue('keyAlias', 'KEY_ALIAS')
+            keyPassword signingValue('keyPassword', 'KEY_PASSWORD')
         }
     }
 
